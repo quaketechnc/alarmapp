@@ -1,0 +1,336 @@
+import SwiftUI
+
+struct AlarmListView: View {
+    @Environment(AlarmStore.self) private var store
+    @AppStorage(.keySnoozeDuration) private var snoozeDuration = 5
+    @State private var showAddMenu = false
+    @State private var showQuick = false
+    @State private var showCustom = false
+    @State private var showRinging = false
+    @State private var showSettings = false
+    @State private var editingAlarm: AlarmItem? = nil
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            OB.bg.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    listHeader
+                        .padding(.horizontal, 22)
+                        .padding(.top, 58)
+                        .padding(.bottom, 16)
+
+                    VStack(spacing: 10) {
+                        ForEach(store.items) { alarm in
+                            AlarmCard(alarm: alarm) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    store.toggle(alarm.id)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { editingAlarm = alarm }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    deleteAlarm(alarm)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 110)
+                }
+            }
+
+            if showAddMenu {
+                Color.black.opacity(0.2)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3)) { showAddMenu = false }
+                    }
+            }
+
+            if showAddMenu {
+                addMenu
+                    .padding(.trailing, 22)
+                    .padding(.bottom, 92)
+                    .transition(.scale(scale: 0.88, anchor: .bottomTrailing).combined(with: .opacity))
+            }
+
+            fabButton
+                .padding(.trailing, 22)
+                .padding(.bottom, 28)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: showAddMenu)
+        .onChange(of: store.firingAlarmID) { _, id in
+            if id != nil { showRinging = true }
+        }
+        .sheet(isPresented: $showQuick) {
+            QuickAlarmSheet { showQuick = false }
+                .presentationDetents([.height(540)])
+                .presentationCornerRadius(28)
+                .presentationBackground(OB.bg)
+        }
+        .fullScreenCover(isPresented: $showCustom) {
+            CustomAlarmView(
+                onSave: { item in
+                    store.add(item)
+                    Task { await scheduleAndStore(item) }
+                    showCustom = false
+                },
+                onCancel: { showCustom = false }
+            )
+        }
+        .fullScreenCover(isPresented: $showRinging, onDismiss: {
+            store.firingAlarmID = nil
+        }) {
+            let firingItem = store.items.first { $0.alarmKitID == store.firingAlarmID }
+                ?? store.pendingSnooze
+            RingingView(
+                missions: firingItem?.missionIDs ?? ["math"],
+                toneID: firingItem?.toneID ?? "sunrise",
+                snoozeDuration: snoozeDuration,
+                onDismiss: {
+                    showRinging = false
+                    store.firingAlarmID = nil
+                    store.pendingSnooze = nil
+                },
+                onSnooze: {
+                    let baseItem = firingItem
+                    showRinging = false
+                    store.firingAlarmID = nil
+                    store.pendingSnooze = nil
+                    Task { await scheduleSnooze(basedOn: baseItem) }
+                }
+            )
+        }
+        .fullScreenCover(isPresented: $showSettings) {
+            SettingsView(onBack: { showSettings = false })
+        }
+        .fullScreenCover(item: $editingAlarm) { alarm in
+            CustomAlarmView(
+                existingAlarm: alarm,
+                onSave: { updatedItem in
+                    if let oldID = updatedItem.alarmKitID {
+                        try? AlarmService.shared.cancel(alarmKitID: oldID)
+                    }
+                    store.update(updatedItem)
+                    Task {
+                        if let uuid = try? await AlarmService.shared.schedule(updatedItem) {
+                            var item = updatedItem
+                            item.alarmKitID = uuid.uuidString
+                            store.update(item)
+                        }
+                    }
+                    editingAlarm = nil
+                },
+                onCancel: { editingAlarm = nil }
+            )
+        }
+    }
+
+    // MARK: - Header
+
+    private var listHeader: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Alarms")
+                    .font(.system(size: 34, weight: .bold))
+                    .kerning(-1.2)
+                    .foregroundStyle(OB.ink)
+                let on = store.items.filter(\.isEnabled).count
+                Text("\(on) on · \(nextRingLabel)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OB.ink3)
+            }
+            Spacer()
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(OB.ink2)
+                    .frame(width: 40, height: 40)
+                    .background(OB.card, in: Circle())
+            }
+            .buttonStyle(ScaleButtonStyle())
+        }
+    }
+
+    private var nextRingLabel: String {
+        let dates = store.items.filter(\.isEnabled).map { AlarmService.shared.nextFireDate(for: $0) }
+        guard let soonest = dates.min() else { return "no alarms set" }
+        let diff = max(0, Int(soonest.timeIntervalSinceNow))
+        let h = diff / 3600
+        let m = (diff % 3600) / 60
+        return h > 0 ? "next in \(h)h \(m)m" : "next in \(m)m"
+    }
+
+    // MARK: - FAB
+
+    private var fabButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                showAddMenu.toggle()
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(.white)
+                .rotationEffect(.degrees(showAddMenu ? 45 : 0))
+                .frame(width: 58, height: 58)
+                .background(OB.ink, in: Circle())
+                .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: showAddMenu)
+    }
+
+    // MARK: - Add menu
+
+    private var addMenu: some View {
+        VStack(spacing: 0) {
+            menuRow(icon: "⏱", title: "Quick alarm", sub: "in a few minutes") {
+                showAddMenu = false
+                showQuick = true
+            }
+            Divider()
+                .padding(.horizontal, 8)
+            menuRow(icon: "✦", title: "Custom alarm", sub: "with missions") {
+                showAddMenu = false
+                showCustom = true
+            }
+        }
+        .background(OB.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 20, y: 6)
+        .frame(width: 224)
+    }
+
+    private func menuRow(icon: String, title: String, sub: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Text(icon)
+                    .font(.system(size: 16))
+                    .frame(width: 34, height: 34)
+                    .background(OB.accent2, in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OB.ink)
+                    Text(sub)
+                        .font(.system(size: 11))
+                        .foregroundStyle(OB.ink3)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(ScaleButtonStyle())
+    }
+
+    // MARK: - Actions
+
+    private func deleteAlarm(_ alarm: AlarmItem) {
+        if let id = alarm.alarmKitID {
+            try? AlarmService.shared.cancel(alarmKitID: id)
+        }
+        if let idx = store.items.firstIndex(where: { $0.id == alarm.id }) {
+            store.delete(at: IndexSet(integer: idx))
+        }
+    }
+
+    private func scheduleAndStore(_ item: AlarmItem) async {
+        guard let idx = store.items.firstIndex(where: { $0.id == item.id }) else { return }
+        if let uuid = try? await AlarmService.shared.schedule(item) {
+            store.items[idx].alarmKitID = uuid.uuidString
+            store.update(store.items[idx])
+        }
+    }
+
+    private func scheduleSnooze(basedOn base: AlarmItem?) async {
+        let now = Date()
+        let cal = Calendar.current
+        let snoozeDate = now.addingTimeInterval(Double(snoozeDuration) * 60)
+        var snooze = AlarmItem(
+            hour: cal.component(.hour, from: snoozeDate),
+            minute: cal.component(.minute, from: snoozeDate),
+            days: Array(repeating: false, count: 7),
+            isEnabled: true,
+            missionIDs: base?.missionIDs ?? ["math"],
+            toneID: base?.toneID ?? "sunrise"
+        )
+        store.pendingSnooze = snooze
+        if let uuid = try? await AlarmService.shared.schedule(snooze) {
+            snooze.alarmKitID = uuid.uuidString
+            store.pendingSnooze = snooze
+        }
+    }
+}
+
+// MARK: - Alarm Card
+
+struct AlarmCard: View {
+    let alarm: AlarmItem
+    let onToggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Text(alarm.timeString)
+                    .font(.system(size: 46, weight: .bold))
+                    .kerning(-2)
+                    .monospacedDigit()
+                    .foregroundStyle(alarm.isEnabled ? OB.ink : OB.ink.opacity(0.35))
+                Spacer()
+                Toggle("", isOn: Binding(get: { alarm.isEnabled }, set: { _ in onToggle() }))
+                    .tint(OB.accent)
+                    .labelsHidden()
+                    .padding(.top, 8)
+            }
+
+            Text(alarm.daysLabel)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(alarm.isEnabled ? OB.ink2 : OB.ink3)
+                .padding(.top, 5)
+
+            HStack(spacing: 6) {
+                if !alarm.missionIDs.isEmpty {
+                    alarmChip(
+                        icon: "bolt.fill",
+                        label: alarm.primaryMissionName,
+                        fg: alarm.isEnabled ? OB.accent : OB.ink3,
+                        bg: alarm.isEnabled ? OB.accent2 : OB.ink.opacity(0.05)
+                    )
+                }
+                alarmChip(
+                    icon: "music.note",
+                    label: alarm.toneName,
+                    fg: OB.ink2,
+                    bg: OB.ink.opacity(0.05)
+                )
+            }
+            .padding(.top, 12)
+        }
+        .padding(18)
+        .background(
+            alarm.isEnabled ? OB.card : OB.card.opacity(0.55),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .opacity(alarm.isEnabled ? 1 : 0.65)
+        .animation(.easeInOut(duration: 0.2), value: alarm.isEnabled)
+    }
+
+    private func alarmChip(icon: String, label: String, fg: Color, bg: Color) -> some View {
+        Label(label, systemImage: icon)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(bg, in: Capsule())
+    }
+}
+
+#Preview {
+    AlarmListView()
+        .environment(AlarmStore())
+}

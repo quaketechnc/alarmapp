@@ -4,5 +4,7 @@
 <dict>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>App functionality, Schedule alarms</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The photo mission uses your camera to confirm you're awake.</string>
 </dict>
 </plist>

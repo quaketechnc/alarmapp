@@ -41,6 +41,8 @@ private extension ScanState {
 // MARK: - Camera View
 
 struct CameraView: View {
+    var onComplete: (() -> Void)? = nil
+
     @Environment(\.dismiss) private var dismiss
 
     @State private var currentTask: AlarmTask = TaskService.shared.current
@@ -201,7 +203,7 @@ struct CameraView: View {
 
         case .success:
             Button {
-                skipToNextTask()
+                if let onComplete { onComplete() } else { skipToNextTask() }
             } label: {
                 Text("Next Task")
                     .font(.headline)

@@ -3,7 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     @State private var coord = OnboardingCoordinator()
     @State private var goingBack = false
-    let onComplete: () -> Void
+    let onComplete: (AlarmItem?) -> Void
 
     var body: some View {
         ZStack {
@@ -20,7 +20,7 @@ struct OnboardingView: View {
                     minute: $coord.alarmMinute,
                     selectedDays: $coord.selectedDays,
                     onNext: navigateNext,
-                    onSkip: onComplete,
+                    onSkip: { onComplete(nil) },
                     onBack: navigateBack
                 )
                 .transition(slideTransition)
@@ -55,7 +55,7 @@ struct OnboardingView: View {
             case .mission:
                 MissionScreen(
                     selectedMissionID: $coord.selectedMissionID,
-                    onFinish: onComplete,
+                    onFinish: buildAndComplete,
                     onBack: navigateBack
                 )
                 .transition(slideTransition)
@@ -66,6 +66,21 @@ struct OnboardingView: View {
 
     private func navigateNext() { goingBack = false; coord.next() }
     private func navigateBack() { goingBack = true; coord.back() }
+
+    private func buildAndComplete() {
+        let missions = coord.selectedMissionID == "off" ? [] : [coord.selectedMissionID]
+        let item = AlarmItem(
+            hour: coord.alarmHour,
+            minute: coord.alarmMinute,
+            days: coord.selectedDays,
+            isEnabled: true,
+            missionIDs: missions,
+            toneID: coord.selectedToneID,
+            volume: coord.volume,
+            vibration: true
+        )
+        onComplete(item)
+    }
 
     private var slideTransition: AnyTransition {
         goingBack
@@ -81,5 +96,5 @@ struct OnboardingView: View {
 }
 
 #Preview {
-    OnboardingView(onComplete: {})
+    OnboardingView(onComplete: { _ in })
 }
