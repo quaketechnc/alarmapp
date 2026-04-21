@@ -4,6 +4,7 @@ struct CustomAlarmView: View {
     let existingAlarm: AlarmItem?
     let onSave: (AlarmItem) -> Void
     let onCancel: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     @State private var alarmDate: Date
     @State private var daily: Bool
@@ -15,15 +16,18 @@ struct CustomAlarmView: View {
 
     @State private var showMissionPicker = false
     @State private var showRingtonePicker = false
+    @State private var showDeleteConfirm = false
 
     private let dayLabels = ["M","T","W","T","F","S","S"]
 
     init(existingAlarm: AlarmItem? = nil,
          onSave: @escaping (AlarmItem) -> Void,
-         onCancel: @escaping () -> Void) {
+         onCancel: @escaping () -> Void,
+         onDelete: (() -> Void)? = nil) {
         self.existingAlarm = existingAlarm
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onDelete = onDelete
         if let a = existingAlarm {
             _alarmDate  = State(initialValue: Calendar.current.date(bySettingHour: a.hour, minute: a.minute, second: 0, of: Date()) ?? Date())
             _daily      = State(initialValue: a.days.allSatisfy { $0 })
@@ -81,10 +85,31 @@ struct CustomAlarmView: View {
                         soundSection
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
-                            .padding(.bottom, 40)
+
+                        if onDelete != nil {
+                            Button {
+                                showDeleteConfirm = true
+                            } label: {
+                                Text("Delete Alarm")
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 52)
+                                    .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                        }
+
+                        Color.clear.frame(height: 40)
                     }
                 }
             }
+        }
+        .confirmationDialog("Delete this alarm?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { onDelete?() }
+            Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showMissionPicker) {
             MissionPickerView(
@@ -255,7 +280,7 @@ struct CustomAlarmView: View {
 
             HStack(spacing: 8) {
                 ForEach(missionIDs, id: \.self) { id in
-                    let mission = allMissions.first { $0.id == id }
+                    let _ = allMissions.first { $0.id == id }
                     ZStack(alignment: .topLeading) {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(OB.card)
@@ -303,40 +328,77 @@ struct CustomAlarmView: View {
     // MARK: - Sound section
 
     private var soundSection: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("SOUND")
-                    .font(.system(size: 11, weight: .bold))
-                    .kerning(0.6)
-                    .foregroundStyle(OB.ink3)
-                Spacer()
-                Button { showRingtonePicker = true } label: {
-                    HStack(spacing: 3) {
-                        Text(allTones.first { $0.id == toneID }?.name ?? "Sunrise")
-                        Image(systemName: "chevron.right")
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(OB.ink2)
-                }
-            }
-            .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SOUND")
+                .font(.system(size: 11, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(OB.ink3)
+                .padding(.horizontal, 4)
 
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.wave.2")
-                    .font(.system(size: 15))
-                    .foregroundStyle(OB.ink2)
-                Slider(value: $volume, in: 0...100)
-                    .tint(OB.accent)
-                Image(systemName: "waveform")
-                    .font(.system(size: 15))
-                    .foregroundStyle(vibration ? OB.ink2 : OB.ink3)
-                Toggle("", isOn: $vibration)
-                    .tint(OB.accent)
-                    .labelsHidden()
-                    .fixedSize()
+            VStack(spacing: 0) {
+                Button { showRingtonePicker = true } label: {
+                    HStack {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 15))
+                            .foregroundStyle(OB.accent)
+                            .frame(width: 28)
+                        Text("Ringtone")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(OB.ink)
+                        Spacer()
+                        Text(allTones.first { $0.id == toneID }?.name ?? "Sunrise")
+                            .font(.system(size: 16))
+                            .foregroundStyle(OB.ink3)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OB.ink3.opacity(0.6))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+                .buttonStyle(.plain)
+
+                Rectangle()
+                    .fill(OB.line)
+                    .frame(height: 0.5)
+                    .padding(.leading, 44)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.wave.1")
+                        .font(.system(size: 14))
+                        .foregroundStyle(OB.ink3)
+                        .frame(width: 28)
+                    Slider(value: $volume, in: 0...100)
+                        .tint(OB.accent)
+                    Image(systemName: "speaker.wave.3")
+                        .font(.system(size: 14))
+                        .foregroundStyle(OB.ink2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+
+                Rectangle()
+                    .fill(OB.line)
+                    .frame(height: 0.5)
+                    .padding(.leading, 44)
+
+                HStack {
+                    Image(systemName: "iphone.radiowaves.left.and.right")
+                        .font(.system(size: 15))
+                        .foregroundStyle(OB.ink2)
+                        .frame(width: 28)
+                    Text("Vibration")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(OB.ink)
+                    Spacer()
+                    Toggle("", isOn: $vibration)
+                        .tint(OB.accent)
+                        .labelsHidden()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(14)
-            .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(OB.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 }

@@ -4,14 +4,11 @@ struct RingtoneScreen: View {
     @Binding var selectedToneID: String
     @Binding var volume: Double
     @State private var playingID: String? = nil
-    let onNext: () -> Void
-    let onBack: () -> Void
     let playTone: (String) -> Void
     let stopTone: () -> Void
 
     var body: some View {
-        ScreenShell(step: 4, totalSteps: 6, onBack: onBack) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 Text("Pick a sound.")
                     .font(.system(size: 28, weight: .bold))
                     .kerning(-0.8)
@@ -52,15 +49,6 @@ struct RingtoneScreen: View {
                 .padding(.top, 14)
 
                 Spacer()
-
-                OBButton(label: "Continue", variant: .primary, action: {
-                    stopTone()
-                    onNext()
-                })
-                .padding(.top, 14)
-                .padding(.bottom, 34)
-            }
-            .padding(.horizontal, 22)
         }
     }
 
@@ -137,7 +125,6 @@ struct RingtoneScreen: View {
     RingtoneScreen(
         selectedToneID: .constant("sunrise"),
         volume: .constant(70),
-        onNext: {}, onBack: {},
         playTone: { _ in }, stopTone: {}
     )
 }

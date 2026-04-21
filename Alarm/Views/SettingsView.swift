@@ -1,5 +1,4 @@
 import SwiftUI
-import AlarmKit
 
 // MARK: - AppStorage Keys
 
@@ -15,13 +14,19 @@ extension String {
 struct SettingsView: View {
     let onBack: () -> Void
 
-    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = "sunrise"
+    @Environment(AlarmStore.self) private var store
+
+    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = "radar"
     @AppStorage(.keyDefaultVolume)    private var defaultVolume    = 70.0
     @AppStorage(.keyDefaultVibration) private var defaultVibration = true
     @AppStorage(.keySnoozeDuration)   private var snoozeDuration   = 5
 
     @State private var showRingtonePicker = false
-    @State private var alarmAuthState    = AlarmManager.shared.authorizationState
+    #if DEBUG
+    @State private var debugClearing = false
+    #endif
+
+    private let alarmService = AlarmService.shared
 
     private var defaultToneName: String {
         allTones.first { $0.id == defaultToneID }?.name ?? defaultToneID.capitalized
@@ -38,15 +43,13 @@ struct SettingsView: View {
                         snoozeSection
                         permissionsSection
                         legalSection
+                        #if DEBUG
+                        debugSection
+                        #endif
                     }
                     .padding(.top, 16)
                     .padding(.bottom, 40)
                 }
-            }
-        }
-        .task {
-            for await state in AlarmManager.shared.authorizationUpdates {
-                alarmAuthState = state
             }
         }
         .sheet(isPresented: $showRingtonePicker) {
@@ -93,7 +96,6 @@ struct SettingsView: View {
 
     private var defaultsSection: some View {
         sectionCard(header: "DEFAULTS FOR NEW ALARMS") {
-            // Tone row
             settingsRow(isLast: false) {
                 Text("Default ringtone")
                     .font(.system(size: 16))
@@ -109,7 +111,6 @@ struct SettingsView: View {
             .contentShape(Rectangle())
             .onTapGesture { showRingtonePicker = true }
 
-            // Volume row
             settingsRow(isLast: false) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -135,7 +136,6 @@ struct SettingsView: View {
                 }
             }
 
-            // Vibration row
             settingsRow(isLast: true) {
                 Text("Vibration")
                     .font(.system(size: 16))
@@ -191,7 +191,7 @@ struct SettingsView: View {
                             .foregroundStyle(OB.ink3)
                     }
                     Spacer()
-                    if alarmAuthState != .authorized {
+                    if alarmService.authState != .authorized {
                         Button("Open Settings") {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
                                 UIApplication.shared.open(url)
@@ -207,35 +207,71 @@ struct SettingsView: View {
     }
 
     private var authBadgeColor: Color {
-        switch alarmAuthState {
-        case .authorized:     return OB.ok
-        case .denied:         return OB.accent
-        case .notDetermined:  return OB.ink3
+        switch alarmService.authState {
+        case .authorized:    return OB.ok
+        case .denied:        return OB.accent
+        case .notDetermined: return OB.ink3
         }
     }
 
     private var authBadgeIcon: String {
-        switch alarmAuthState {
-        case .authorized:     return "checkmark"
-        case .denied:         return "xmark"
-        case .notDetermined:  return "questionmark"
+        switch alarmService.authState {
+        case .authorized:    return "checkmark"
+        case .denied:        return "xmark"
+        case .notDetermined: return "questionmark"
         }
     }
 
     private var authStatusLabel: String {
-        switch alarmAuthState {
-        case .authorized:     return "Authorized"
-        case .denied:         return "Denied — tap to open Settings"
-        case .notDetermined:  return "Not yet requested"
+        switch alarmService.authState {
+        case .authorized:    return "Authorized"
+        case .denied:        return "Denied — tap to open Settings"
+        case .notDetermined: return "Not yet requested"
         }
     }
+
+    // MARK: - Debug section
+
+    #if DEBUG
+    private var debugSection: some View {
+        sectionCard(header: "DEBUG") {
+            settingsRow(isLast: true) {
+                Button {
+                    guard !debugClearing else { return }
+                    debugClearing = true
+                    Task {
+                        await AlarmService.shared.cancelAllAlarms()
+                        store.backupAlarmKitID = nil
+                        store.pendingMission = nil
+                        store.firingAlarmID = nil
+                        store.pendingSnooze = nil
+                        for item in store.items {
+                            var mutable = item
+                            mutable.alarmKitID = nil
+                            store.update(mutable)
+                        }
+                        debugClearing = false
+                    }
+                } label: {
+                    HStack {
+                        Text(debugClearing ? "Clearing…" : "🗑 Cancel ALL alarms")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(debugClearing ? OB.ink3 : OB.accent)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(ScaleButtonStyle())
+                .disabled(debugClearing)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Legal section
 
     private var legalSection: some View {
         sectionCard(header: "LEGAL") {
             legalRow(title: "Terms of Use", isLast: false) {
-                // Replace with real URL before shipping
                 if let url = URL(string: "https://example.com/terms") {
                     UIApplication.shared.open(url)
                 }
@@ -301,4 +337,5 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView(onBack: {})
+        .environment(AlarmStore())
 }

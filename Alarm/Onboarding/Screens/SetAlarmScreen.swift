@@ -6,20 +6,25 @@ struct SetAlarmScreen: View {
     @Binding var hour: Int
     @Binding var minute: Int
     @Binding var selectedDays: [Bool]
-    let onNext: () -> Void
-    let onSkip: () -> Void
-    let onBack: () -> Void
 
     private let dayLabels = ["M", "T", "W", "T", "F", "S", "S"]
     private let dayFull   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    private var isOneTime: Bool { selectedDays.allSatisfy { !$0 } }
+
+    private var onceLabel: String {
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        comps.hour = hour; comps.minute = minute; comps.second = 0
+        if let d = Calendar.current.date(from: comps), d > Date() { return "Fires once · today" }
+        return "Fires once · tomorrow"
+    }
 
     @FocusState private var focusedField: TimeField?
     @State private var hourInput: String = ""
     @State private var minuteInput: String = ""
 
     var body: some View {
-        ScreenShell(step: 1, totalSteps: 6, onBack: onBack) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 Text("When should we\ndrag you out of bed?")
                     .font(.system(size: 28, weight: .bold))
                     .kerning(-0.8)
@@ -34,10 +39,18 @@ struct SetAlarmScreen: View {
                     .padding(.top, 8)
 
                 // Card
-                VStack(spacing: 24) {
+                VStack(spacing: 16) {
                     timePicker
                     dayChips
+                    if isOneTime {
+                        Text(onceLabel)
+                            .font(.system(size: 13))
+                            .foregroundStyle(OB.ink3)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
+                .animation(.easeInOut(duration: 0.2), value: isOneTime)
                 .padding(20)
                 .background(OB.card, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
                 .padding(.top, 24)
@@ -46,16 +59,8 @@ struct SetAlarmScreen: View {
 
                 Spacer()
 
-                OBButton(label: "Set Alarm", variant: .accent, action: {
-                    commitEditing()
-                    onNext()
-                })
-                .padding(.bottom, 34)
             }
-            .padding(.horizontal, 22)
-            // Hidden text fields for keyboard input
             .background(hiddenFields)
-        }
     }
 
     // MARK: - Hidden keyboard fields
@@ -261,7 +266,6 @@ struct SetAlarmScreen: View {
     SetAlarmScreen(
         hour: .constant(7),
         minute: .constant(0),
-        selectedDays: .constant([true, true, true, true, true, false, false]),
-        onNext: {}, onSkip: {}, onBack: {}
+        selectedDays: .constant([true, true, true, true, true, false, false])
     )
 }

@@ -86,6 +86,7 @@ struct ScreenShell<Content: View>: View {
     let step: Int
     let totalSteps: Int
     var showBack: Bool = true
+    var padding:CGFloat = 0
     var onBack: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
@@ -97,27 +98,25 @@ struct ScreenShell<Content: View>: View {
                 topBar
                 content()
             }
+            .padding(padding)
         }
     }
     
     private var topBar: some View {
-        HStack {
-            if showBack, let back = onBack {
-                Button(action: back) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(OB.ink2)
-                        .frame(width: 36, height: 36)
+        ProgressDots(total: totalSteps, active: step)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .overlay(alignment: .leading) {
+                if showBack, let back = onBack {
+                    Button(action: back) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OB.ink2)
+                            .frame(width: 36, height: 36)
+                    }
+                } else {
+                    Spacer().frame(width: 36, height: 36)
                 }
-                .padding(.leading, 22)
-            } else {
-                Spacer().frame(width: 36, height: 36)
-                    .padding(.leading, 22)
             }
-            Spacer()
-            ProgressDots(total: totalSteps, active: step)
-            Spacer()
-            Spacer().frame(width: 36, height: 36)
-        }
     }
 }

@@ -1,30 +1,13 @@
 import SwiftUI
 import UserNotifications
-import AVFoundation
 
 // MARK: - Data models
 
 enum OnboardingStep: Int, CaseIterable {
-    case intro, setAlarm, ringtone,  mission, permAlarm, permNotif
+    case intro, setAlarm, ringtone, mission, permAlarm, permNotif
 }
 
 enum PermState { case prompt, granted, denied }
-
-struct AlarmTone: Identifiable {
-    let id: String
-    let name: String
-    let hint: String
-    let fileName: String
-}
-
-let allTones: [AlarmTone] = [
-    AlarmTone(id: "bells",   name: "Soft Bells",    hint: "gentle chimes",    fileName: "Bell"),
-    AlarmTone(id: "sunrise", name: "Sunrise",        hint: "warm pads rising", fileName: "ReadyForTheNewDawn_1"),
-    AlarmTone(id: "digital", name: "Digital Beep",   hint: "classic, urgent",  fileName: "Beep"),
-    AlarmTone(id: "rooster", name: "Rooster",         hint: "farm energy",      fileName: "Rooster"),
-    AlarmTone(id: "water",   name: "Waterfall",       hint: "white noise",      fileName: "Noise_1"),
-    AlarmTone(id: "siren",   name: "Siren",           hint: "hard to ignore",   fileName: "Siren"),
-]
 
 struct AlarmMission: Identifiable {
     let id: String
@@ -51,13 +34,13 @@ final class OnboardingCoordinator {
     var selectedDays: [Bool] = [true, true, true, true, true, false, false]
     var alarmPermState: PermState = .prompt
     var notifPermState: PermState = .prompt
+    var alarmGrantedViaSettings = false
+    var notifGrantedViaSettings = false
     var selectedToneID: String = "sunrise"
     var volume: Double = 70 {
-        didSet { audioPlayer?.volume = Float(volume / 100) }
+        didSet { AudioService.shared.setVolume(volume) }
     }
     var selectedMissionID: String = "math"
-
-    @ObservationIgnored private var audioPlayer: AVAudioPlayer?
 
     func next() {
         let nextRaw = step.rawValue + 1
@@ -78,31 +61,38 @@ final class OnboardingCoordinator {
         selectedDays[index].toggle()
     }
 
-    // MARK: Notifications
-    func requestNotificationPermission(completion: @escaping (Bool) -> Void) {
+    // MARK: Permissions
+
+    func requestAlarmPermission(onGranted: @escaping () -> Void) {
+        Task {
+            do {
+                let granted = try await AlarmService.shared.requestAuthorization()
+                await MainActor.run {
+                    withAnimation { alarmPermState = granted ? .granted : .denied }
+                    if granted { onGranted() }
+                }
+            } catch {
+                await MainActor.run { withAnimation { alarmPermState = .denied } }
+            }
+        }
+    }
+
+    func requestNotifPermission(onGranted: @escaping () -> Void) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             DispatchQueue.main.async {
-                self.notifPermState = granted ? .granted : .denied
-                completion(granted)
+                withAnimation { self.notifPermState = granted ? .granted : .denied }
+                if granted { onGranted() }
             }
         }
     }
 
     // MARK: Audio preview
+
     func playTone(_ toneID: String) {
-        guard let tone = allTones.first(where: { $0.id == toneID }),
-              let url = Bundle.main.url(forResource: tone.fileName, withExtension: "mp3") else { return }
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-            audioPlayer?.stop()
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.volume = Float(volume / 100)
-            audioPlayer?.play()
-        } catch {}
+        AudioService.shared.play(toneID: toneID, volume: volume)
     }
 
     func stopTone() {
-        audioPlayer?.stop()
+        AudioService.shared.stop()
     }
 }

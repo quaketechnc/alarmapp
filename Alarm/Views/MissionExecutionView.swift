@@ -10,7 +10,7 @@ struct MissionExecutionView: View {
 
     @State private var currentIndex = 0
 
-    private var activeMission: String { missions[currentIndex] }
+    private var activeMission: String { currentIndex < missions.count ? missions[currentIndex] : "" }
     private var progress: String { "\(currentIndex + 1)/\(missions.count)" }
     private var progressFraction: Double {
         Double(currentIndex + 1) / Double(max(1, missions.count))
@@ -79,7 +79,10 @@ struct MissionExecutionView: View {
 
     @ViewBuilder
     private var missionContent: some View {
-        let advance = { currentIndex += 1; if currentIndex >= missions.count { onComplete() } }
+        let advance = {
+            let next = currentIndex + 1
+            if next >= missions.count { onComplete() } else { currentIndex = next }
+        }
         switch activeMission {
         case "math":
             MathMissionView(onSolve: advance)

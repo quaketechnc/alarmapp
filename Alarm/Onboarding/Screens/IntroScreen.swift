@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct IntroScreen: View {
-    let onNext: () -> Void
 
     private let others: [(String, Bool)] = [
         ("6:00", true), ("6:15", true), ("6:30", true),
@@ -9,36 +8,26 @@ struct IntroScreen: View {
     ]
 
     var body: some View {
-        ScreenShell(step: 0, totalSteps: 6, showBack: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                cardsRow
-                    .padding(.top, 28)
-                Spacer()
-                // Headline
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("No more snoozing.")
-                        .font(.system(size: 34, weight: .bold))
-                        .kerning(-1.2)
-                    Text("Own your day.")
-                        .font(.system(size: 34, weight: .bold))
-                        .kerning(-1.2)
-                        .foregroundStyle(OB.accent)
-                }
-                
-                Text("One alarm. No escape button. A morning that actually starts when you said it would.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(OB.ink2)
-                    .lineSpacing(5)
-                    .padding(.top, 10)
-                
-                OBButton(label: "Let's do this", variant: .primary, action: onNext)
-                    .padding(.top, 18)
-                    .padding(.bottom, 38)
+        VStack(alignment: .leading, spacing: 0) {
+            cardsRow
+                .padding(.top, 28)
+            Spacer()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No more snoozing.")
+                    .font(.system(size: 34, weight: .bold))
+                    .kerning(-1.2)
+                Text("Own your day.")
+                    .font(.system(size: 34, weight: .bold))
+                    .kerning(-1.2)
+                    .foregroundStyle(OB.accent)
             }
-            .padding(.horizontal, 22)
-            .foregroundStyle(OB.ink)
+            Text("One alarm. No escape button. A morning that actually starts when you said it would.")
+                .font(.system(size: 15))
+                .foregroundStyle(OB.ink2)
+                .lineSpacing(5)
+                .padding(.top, 10)
         }
-        
+        .foregroundStyle(OB.ink)
     }
 
     
@@ -152,5 +141,5 @@ private struct MiniToggle: View {
 }
 
 #Preview {
-    IntroScreen(onNext: {})
+    IntroScreen()
 }

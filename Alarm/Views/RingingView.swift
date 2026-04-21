@@ -1,20 +1,20 @@
+import os
 import SwiftUI
 import Combine
-import AVFoundation
+
+private let log = Logger(subsystem: "com.alarm", category: "ringing")
 
 private let nightBg = Color(red: 0.102, green: 0.086, blue: 0.071)
 
 struct RingingView: View {
     let missions: [String]
     let toneID: String
-    var snoozeDuration: Int = 5
+    var volume: Double = 70
     let onDismiss: () -> Void
-    let onSnooze: () -> Void
 
     @State private var now = Date()
     @State private var showMission = false
     @State private var pulseScale: CGFloat = 1.0
-    @State private var audioPlayer: AVAudioPlayer?
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -107,47 +107,44 @@ struct RingingView: View {
 
                 Spacer()
 
-                VStack(spacing: 12) {
-                    Button {
-                        showMission = true
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 16, weight: .semibold))
-                                .opacity(0.7)
-                            Text("Slide to start mission")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 64)
-                        .foregroundStyle(.white)
-                        .background(
-                            .white.opacity(0.1),
-                            in: RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                                .stroke(.white.opacity(0.2), lineWidth: 2)
-                        )
+                Button {
+                    guard !showMission else { return }
+                    log.info("→ showMission tapped")
+                    showMission = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .opacity(0.7)
+                        Text("Solve mission to dismiss")
+                            .font(.system(size: 16, weight: .semibold))
                     }
-                    .buttonStyle(ScaleButtonStyle())
-                    .padding(.horizontal, 22)
-
-                    Button(action: onSnooze) {
-                        Text("Snooze · \(snoozeDuration) min")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                    .frame(height: 32)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 64)
+                    .foregroundStyle(.white)
+                    .background(
+                        .white.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 32, style: .continuous)
+                            .stroke(.white.opacity(0.2), lineWidth: 2)
+                    )
                 }
+                .buttonStyle(ScaleButtonStyle())
+                .padding(.horizontal, 22)
                 .padding(.bottom, 44)
             }
         }
         .onAppear {
             pulseScale = 1.3
-            playTone()
+            log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions)")
+            AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
         }
-        .onDisappear { stopTone() }
+        .onDisappear {
+            log.info("🔕 RingingView disappear")
+            AudioService.shared.stop()
+        }
         .onReceive(timer) { now = $0 }
         .fullScreenCover(isPresented: $showMission) {
             MissionExecutionView(
@@ -162,26 +159,8 @@ struct RingingView: View {
             )
         }
     }
-
-    private func playTone() {
-        guard let tone = allTones.first(where: { $0.id == toneID }),
-              let url = Bundle.main.url(forResource: tone.fileName, withExtension: "mp3")
-        else { return }
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.numberOfLoops = -1
-            audioPlayer?.play()
-        } catch {}
-    }
-
-    private func stopTone() {
-        audioPlayer?.stop()
-        audioPlayer = nil
-    }
 }
 
 #Preview {
-    RingingView(missions: ["math", "typing"], toneID: "sunrise", onDismiss: {}, onSnooze: {})
+    RingingView(missions: ["math", "typing"], toneID: "sunrise", onDismiss: {})
 }

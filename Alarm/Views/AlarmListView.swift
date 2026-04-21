@@ -1,8 +1,10 @@
+import os
 import SwiftUI
+
+private let log = Logger(subsystem: "com.alarm", category: "list")
 
 struct AlarmListView: View {
     @Environment(AlarmStore.self) private var store
-    @AppStorage(.keySnoozeDuration) private var snoozeDuration = 5
     @State private var showAddMenu = false
     @State private var showQuick = false
     @State private var showCustom = false
@@ -14,34 +16,37 @@ struct AlarmListView: View {
         ZStack(alignment: .bottomTrailing) {
             OB.bg.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    listHeader
-                        .padding(.horizontal, 22)
-                        .padding(.top, 58)
-                        .padding(.bottom, 16)
+            VStack(spacing: 0) {
+                listHeader
+                    .padding(.horizontal, 22)
+                    .padding(.top, 58)
+                    .padding(.bottom, 8)
 
-                    VStack(spacing: 10) {
-                        ForEach(store.items) { alarm in
-                            AlarmCard(alarm: alarm) {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    store.toggle(alarm.id)
-                                }
+                List {
+                    ForEach(store.items) { alarm in
+                        AlarmCard(alarm: alarm) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                store.toggle(alarm.id)
                             }
-                            .contentShape(Rectangle())
-                            .onTapGesture { editingAlarm = alarm }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    deleteAlarm(alarm)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
+                        }
+                        .onTapGesture { editingAlarm = alarm }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 22, bottom: 5, trailing: 22))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                deleteAlarm(alarm)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.bottom, 110)
+                    Color.clear.frame(height: 70)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
 
             if showAddMenu {
@@ -65,7 +70,22 @@ struct AlarmListView: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: showAddMenu)
         .onChange(of: store.firingAlarmID) { _, id in
-            if id != nil { showRinging = true }
+            if let id {
+                log.info("→ showRinging (firingAlarmID=\(id))")
+                showRinging = true
+            }
+        }
+        .onChange(of: store.pendingMission) { _, mission in
+            if let mission {
+                log.info("→ showRinging (pendingMission id=\(mission.id) time=\(mission.timeString))")
+                showRinging = true
+            }
+        }
+        .onAppear {
+            if let mission = store.pendingMission {
+                log.info("→ showRinging on appear (pendingMission id=\(mission.id) time=\(mission.timeString))")
+                showRinging = true
+            }
         }
         .sheet(isPresented: $showQuick) {
             QuickAlarmSheet { showQuick = false }
@@ -88,21 +108,14 @@ struct AlarmListView: View {
         }) {
             let firingItem = store.items.first { $0.alarmKitID == store.firingAlarmID }
                 ?? store.pendingSnooze
+                ?? store.pendingMission
             RingingView(
                 missions: firingItem?.missionIDs ?? ["math"],
                 toneID: firingItem?.toneID ?? "sunrise",
-                snoozeDuration: snoozeDuration,
+                volume: firingItem?.volume ?? 70,
                 onDismiss: {
+                    completeMission()
                     showRinging = false
-                    store.firingAlarmID = nil
-                    store.pendingSnooze = nil
-                },
-                onSnooze: {
-                    let baseItem = firingItem
-                    showRinging = false
-                    store.firingAlarmID = nil
-                    store.pendingSnooze = nil
-                    Task { await scheduleSnooze(basedOn: baseItem) }
                 }
             )
         }
@@ -126,7 +139,11 @@ struct AlarmListView: View {
                     }
                     editingAlarm = nil
                 },
-                onCancel: { editingAlarm = nil }
+                onCancel: { editingAlarm = nil },
+                onDelete: {
+                    deleteAlarm(alarm)
+                    editingAlarm = nil
+                }
             )
         }
     }
@@ -230,7 +247,45 @@ struct AlarmListView: View {
 
     // MARK: - Actions
 
+    private func completeMission() {
+        log.info("✓ completeMission start")
+
+        // Cancel the original firing alarm so AlarmKit doesn't re-trigger it.
+        if let firingID = store.firingAlarmID {
+            log.info("✗ cancel original alarm alarmKitID=\(firingID)")
+            try? AlarmService.shared.cancel(alarmKitID: firingID)
+        }
+
+        if let backupID = store.backupAlarmKitID {
+            log.info("✗ cancel backup alarmKitID=\(backupID)")
+            try? AlarmService.shared.cancel(alarmKitID: backupID)
+            store.backupAlarmKitID = nil
+        }
+
+        if let mission = store.pendingMission,
+           let idx = store.items.firstIndex(where: { $0.id == mission.id }) {
+            let isOneTime = store.items[idx].days.allSatisfy({ !$0 })
+            if isOneTime {
+                log.info("~ one-time alarm id=\(mission.id) → disabled")
+                store.items[idx].isEnabled = false
+                store.items[idx].alarmKitID = nil
+                store.update(store.items[idx])
+            } else {
+                // Recurring alarm: reschedule so it fires again on the next occurrence.
+                let item = store.items[idx]
+                log.info("~ recurring alarm id=\(mission.id) → rescheduling")
+                Task { await scheduleAndStore(item) }
+            }
+        }
+
+        store.firingAlarmID = nil
+        store.pendingSnooze = nil
+        store.pendingMission = nil
+        log.info("✓ completeMission done")
+    }
+
     private func deleteAlarm(_ alarm: AlarmItem) {
+        log.info("− deleteAlarm id=\(alarm.id) alarmKitID=\(alarm.alarmKitID ?? "nil")")
         if let id = alarm.alarmKitID {
             try? AlarmService.shared.cancel(alarmKitID: id)
         }
@@ -241,30 +296,17 @@ struct AlarmListView: View {
 
     private func scheduleAndStore(_ item: AlarmItem) async {
         guard let idx = store.items.firstIndex(where: { $0.id == item.id }) else { return }
-        if let uuid = try? await AlarmService.shared.schedule(item) {
+        log.info("+ scheduleAndStore id=\(item.id) time=\(item.timeString)")
+        do {
+            let uuid = try await AlarmService.shared.schedule(item)
             store.items[idx].alarmKitID = uuid.uuidString
             store.update(store.items[idx])
+            log.info("✓ scheduleAndStore → alarmKitID=\(uuid.uuidString)")
+        } catch {
+            log.error("✗ scheduleAndStore failed: \(error)")
         }
     }
 
-    private func scheduleSnooze(basedOn base: AlarmItem?) async {
-        let now = Date()
-        let cal = Calendar.current
-        let snoozeDate = now.addingTimeInterval(Double(snoozeDuration) * 60)
-        var snooze = AlarmItem(
-            hour: cal.component(.hour, from: snoozeDate),
-            minute: cal.component(.minute, from: snoozeDate),
-            days: Array(repeating: false, count: 7),
-            isEnabled: true,
-            missionIDs: base?.missionIDs ?? ["math"],
-            toneID: base?.toneID ?? "sunrise"
-        )
-        store.pendingSnooze = snooze
-        if let uuid = try? await AlarmService.shared.schedule(snooze) {
-            snooze.alarmKitID = uuid.uuidString
-            store.pendingSnooze = snooze
-        }
-    }
 }
 
 // MARK: - Alarm Card

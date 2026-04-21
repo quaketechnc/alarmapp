@@ -2,12 +2,9 @@ import SwiftUI
 
 struct MissionScreen: View {
     @Binding var selectedMissionID: String
-    let onFinish: () -> Void
-    let onBack: () -> Void
 
     var body: some View {
-        ScreenShell(step: 5, totalSteps: 6, onBack: onBack) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 Text("Prove you're up.")
                     .font(.system(size: 28, weight: .bold))
                     .kerning(-0.8)
@@ -29,12 +26,6 @@ struct MissionScreen: View {
                 .padding(.top, 18)
 
                 Spacer()
-
-                OBButton(label: "Finish setup", variant: .accent, action: onFinish)
-                    .padding(.top, 14)
-                    .padding(.bottom, 34)
-            }
-            .padding(.horizontal, 22)
         }
     }
 
@@ -126,5 +117,5 @@ struct MissionIconView: View {
 }
 
 #Preview {
-    MissionScreen(selectedMissionID: .constant("math"), onFinish: {}, onBack: {})
+    MissionScreen(selectedMissionID: .constant("math"))
 }
