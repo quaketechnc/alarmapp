@@ -122,15 +122,7 @@ final class AlarmService {
     var isAuthorized: Bool { authState == .authorized }
 
     private let alertPresentation = AlarmPresentation(
-        alert: AlarmPresentation.Alert(
-            title: "Time to wake up!",
-            secondaryButton: AlarmButton(
-                text: "Solve Mission",
-                textColor: .orange,
-                systemImageName: "bolt.fill"
-            ),
-            secondaryButtonBehavior: .custom
-        )
+        alert: AlarmPresentation.Alert(title: "Time to wake up!")
     )
 
     private init() {
@@ -191,7 +183,7 @@ final class AlarmService {
                 tintColor: .orange
             ),
             stopIntent: intent,
-            secondaryIntent: intent,
+            secondaryIntent: nil,
             sound: alertSound(for: item)
         )
         _ = try await AlarmManager.shared.schedule(id: backupID, configuration: config)

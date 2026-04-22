@@ -142,7 +142,11 @@ struct RingingView: View {
         .onAppear {
             pulseScale = 1.3
             log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions)")
-            AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+            // watchAlarms usually already started playback. Only kick off here
+            // if it didn't (e.g. cold launch where onAppear wins the race).
+            if !AudioService.shared.isPlaying {
+                AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+            }
         }
         .onDisappear {
             log.info("🔕 RingingView disappear")

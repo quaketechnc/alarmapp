@@ -53,10 +53,8 @@ final class AudioService {
     }
 
     private func makePlayer(url: URL) -> AVAudioPlayer? {
+        activateSession()
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
             let p = try AVAudioPlayer(contentsOf: url)
             p.prepareToPlay()
             return p
@@ -64,5 +62,25 @@ final class AudioService {
             log.error("▶ AVAudioPlayer init failed for \(url.lastPathComponent): \(error)")
             return nil
         }
+    }
+
+    /// AlarmKit's own audio session can still be active when we launch via
+    /// intent from the lock screen; `setActive(true)` may throw `isBusy`.
+    /// Retry a few times with a short backoff so we don't end up with a live
+    /// player on an inactive session (silent audio + vibration only).
+    private func activateSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [.duckOthers])
+        for attempt in 0..<5 {
+            do {
+                try session.setActive(true, options: [.notifyOthersOnDeactivation])
+                if attempt > 0 { log.info("▶ session active on attempt \(attempt + 1)") }
+                return
+            } catch {
+                log.warning("▶ setActive failed (attempt \(attempt + 1)): \(error)")
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+        log.error("▶ setActive gave up after retries")
     }
 }

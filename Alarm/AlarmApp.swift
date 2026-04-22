@@ -1,3 +1,4 @@
+import AVFoundation
 import os
 import SwiftUI
 import UserNotifications
@@ -82,6 +83,13 @@ struct AlarmApp: App {
             // simply completes. The in-app ringing experience is driven by
             // `RingingView` + `AudioService` from here on.
             AlarmService.shared.stop(alarmKitID: id)
+
+            // Start in-app audio immediately — don't wait for RingingView.onAppear.
+            // The view's onAppear may lag by hundreds of ms (SwiftUI transition),
+            // during which AlarmKit's own audio session has already released and
+            // the user perceives silence + vibration. Playing here narrows the gap
+            // and gives AudioService's session-activation retry the earliest shot.
+            AudioService.shared.play(toneID: item.toneID, volume: item.volume, loops: -1)
 
             store.firingAlarmID = id
             store.pendingMission = item
