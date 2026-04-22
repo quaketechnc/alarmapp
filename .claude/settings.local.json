@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build)",
+      "Bash(sudo xcode-select *)",
+      "Bash(xcodebuild -version)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'generic/platform=iOS Simulator' build)",
+      "Bash(find /Applications/Xcode*.app -name \"*.swiftinterface\")",
+      "Bash(xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -quiet)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -quiet)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro')",
+      "Bash(find /Users/alexey_bursmitrovicloud.com/Documents/Developement/Alarm -name \"*.swift\" -type f -exec grep -l \"^let allMissions\\\\|^let allTones\\\\|struct OB\\\\|class OB\" {} \\\\;)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -quiet build)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(xcrun --sdk iphonesimulator --show-sdk-path)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk iphonesimulator --show-sdk-path)",
+      "Bash(grep -iE \"\\\\.\\(mp3|caf|m4a|wav|aiff\\)$\")",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build)",
+      "Bash(grep -cE \"\\\\.\\(mp3|m4a|caf|wav|aiff|aif\\)$\" echo \"---\" ls /Users/alexey_bursmitrovicloud.com/Library/Developer/Xcode/DerivedData/Alarm-ftcyaklqtfkweveizkuwvorvilzv/Build/Products/Debug-iphonesimulator/Alarm.app/)",
+      "Bash(grep -E \"\\\\.\\(mp3|m4a|caf|wav|aiff|aif\\)$\")"
+    ]
+  }
+}

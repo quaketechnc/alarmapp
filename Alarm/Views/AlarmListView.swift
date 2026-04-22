@@ -29,7 +29,10 @@ struct AlarmListView: View {
                                 store.toggle(alarm.id)
                             }
                         }
-                        .onTapGesture { editingAlarm = alarm }
+                        .onTapGesture {
+                            guard !alarm.isQuick else { return }
+                            editingAlarm = alarm
+                        }
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 5, leading: 22, bottom: 5, trailing: 22))
@@ -107,15 +110,14 @@ struct AlarmListView: View {
             store.firingAlarmID = nil
         }) {
             let firingItem = store.items.first { $0.alarmKitID == store.firingAlarmID }
-                ?? store.pendingSnooze
                 ?? store.pendingMission
             RingingView(
                 missions: firingItem?.missionIDs ?? ["math"],
-                toneID: firingItem?.toneID ?? "sunrise",
+                toneID: firingItem?.toneID ?? defaultAlarmToneID,
                 volume: firingItem?.volume ?? 70,
                 onDismiss: {
-                    completeMission()
                     showRinging = false
+                    Task { await store.completeMission() }
                 }
             )
         }
@@ -246,43 +248,6 @@ struct AlarmListView: View {
     }
 
     // MARK: - Actions
-
-    private func completeMission() {
-        log.info("✓ completeMission start")
-
-        // Cancel the original firing alarm so AlarmKit doesn't re-trigger it.
-        if let firingID = store.firingAlarmID {
-            log.info("✗ cancel original alarm alarmKitID=\(firingID)")
-            try? AlarmService.shared.cancel(alarmKitID: firingID)
-        }
-
-        if let backupID = store.backupAlarmKitID {
-            log.info("✗ cancel backup alarmKitID=\(backupID)")
-            try? AlarmService.shared.cancel(alarmKitID: backupID)
-            store.backupAlarmKitID = nil
-        }
-
-        if let mission = store.pendingMission,
-           let idx = store.items.firstIndex(where: { $0.id == mission.id }) {
-            let isOneTime = store.items[idx].days.allSatisfy({ !$0 })
-            if isOneTime {
-                log.info("~ one-time alarm id=\(mission.id) → disabled")
-                store.items[idx].isEnabled = false
-                store.items[idx].alarmKitID = nil
-                store.update(store.items[idx])
-            } else {
-                // Recurring alarm: reschedule so it fires again on the next occurrence.
-                let item = store.items[idx]
-                log.info("~ recurring alarm id=\(mission.id) → rescheduling")
-                Task { await scheduleAndStore(item) }
-            }
-        }
-
-        store.firingAlarmID = nil
-        store.pendingSnooze = nil
-        store.pendingMission = nil
-        log.info("✓ completeMission done")
-    }
 
     private func deleteAlarm(_ alarm: AlarmItem) {
         log.info("− deleteAlarm id=\(alarm.id) alarmKitID=\(alarm.alarmKitID ?? "nil")")

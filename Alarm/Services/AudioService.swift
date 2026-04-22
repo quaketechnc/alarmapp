@@ -1,4 +1,3 @@
-import AudioToolbox
 import AVFoundation
 import os
 import Observation
@@ -13,36 +12,30 @@ final class AudioService {
     private(set) var currentToneID: String?
 
     @ObservationIgnored private var player: AVAudioPlayer?
-    @ObservationIgnored private var loopTask: Task<Void, Never>?
 
+    /// Plays the tone from the app bundle. `loops = -1` loops forever — use
+    /// this for ringing. `loops = 0` plays once (preview).
     func play(toneID: String, volume: Double = 100, loops: Int = 0) {
-        guard let tone = allTones.first(where: { $0.id == toneID }) else {
-            log.error("▶ unknown toneID '\(toneID)'")
+        let tone = allTones.first { $0.id == toneID }
+            ?? allTones.first { $0.id == defaultAlarmToneID }
+            ?? allTones.first
+        guard let tone else {
+            log.error("▶ no tones in bundle — nothing to play")
+            return
+        }
+        guard let url = tone.bundleURL else {
+            log.error("▶ tone '\(tone.id)' has no bundle URL (fileName=\(tone.fileName))")
             return
         }
         stop()
-
-        if let url = tone.previewURL, let p = makePlayer(url: url) {
-            p.volume = Float(volume / 100)
-            p.numberOfLoops = loops
-            p.play()
-            player = p
-            isPlaying = true
-            currentToneID = toneID
-            log.info("▶ AVAudioPlayer toneID='\(toneID)' volume=\(Int(volume))%")
-        } else {
-            // System file inaccessible — fall back to AudioServices loop.
-            isPlaying = true
-            currentToneID = toneID
-            log.info("▶ AudioServices fallback toneID='\(toneID)'")
-            let shouldLoop = loops != 0
-            loopTask = Task {
-                repeat {
-                    AudioServicesPlaySystemSound(tone.systemSoundID)
-                    try? await Task.sleep(for: .seconds(3))
-                } while shouldLoop && !Task.isCancelled
-            }
-        }
+        guard let p = makePlayer(url: url) else { return }
+        p.volume = Float(volume / 100)
+        p.numberOfLoops = loops
+        p.play()
+        player = p
+        isPlaying = true
+        currentToneID = tone.id
+        log.info("▶ play '\(tone.id)' file='\(tone.fileName)' vol=\(Int(volume))% loops=\(loops)")
     }
 
     func setVolume(_ volume: Double) {
@@ -50,8 +43,6 @@ final class AudioService {
     }
 
     func stop() {
-        loopTask?.cancel()
-        loopTask = nil
         if isPlaying {
             log.info("⏹ stop (toneID='\(self.currentToneID ?? "none")')")
         }
@@ -63,11 +54,14 @@ final class AudioService {
 
     private func makePlayer(url: URL) -> AVAudioPlayer? {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-            return try AVAudioPlayer(contentsOf: url)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.prepareToPlay()
+            return p
         } catch {
-            log.error("▶ AVAudioPlayer init failed: \(error)")
+            log.error("▶ AVAudioPlayer init failed for \(url.lastPathComponent): \(error)")
             return nil
         }
     }

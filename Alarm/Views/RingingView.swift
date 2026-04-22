@@ -108,15 +108,18 @@ struct RingingView: View {
                 Spacer()
 
                 Button {
-                    guard !showMission else { return }
-                    log.info("→ showMission tapped")
-                    showMission = true
+                    if missions.isEmpty {
+                        onDismiss()
+                    } else {
+                        guard !showMission else { return }
+                        showMission = true
+                    }
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "arrow.right")
+                        Image(systemName: missions.isEmpty ? "checkmark" : "arrow.right")
                             .font(.system(size: 16, weight: .semibold))
                             .opacity(0.7)
-                        Text("Solve mission to dismiss")
+                        Text(missions.isEmpty ? "Dismiss alarm" : "Solve mission to dismiss")
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -152,9 +155,6 @@ struct RingingView: View {
                 onComplete: {
                     showMission = false
                     onDismiss()
-                },
-                onCancel: {
-                    showMission = false
                 }
             )
         }
@@ -162,5 +162,5 @@ struct RingingView: View {
 }
 
 #Preview {
-    RingingView(missions: ["math", "typing"], toneID: "sunrise", onDismiss: {})
+    RingingView(missions: ["math", "typing"], toneID: defaultAlarmToneID, onDismiss: {})
 }

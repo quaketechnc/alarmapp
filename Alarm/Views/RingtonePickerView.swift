@@ -88,9 +88,11 @@ struct RingtonePickerView: View {
                 Text(tone.name)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(OB.ink)
-                Text(tone.hint)
-                    .font(.system(size: 12))
-                    .foregroundStyle(OB.ink3)
+                if !tone.hint.isEmpty {
+                    Text(tone.hint)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OB.ink3)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -126,5 +128,5 @@ struct RingtonePickerView: View {
 }
 
 #Preview {
-    RingtonePickerView(selectedID: "sunrise", onDone: { _ in }, onBack: {})
+    RingtonePickerView(selectedID: defaultAlarmToneID, onDone: { _ in }, onBack: {})
 }

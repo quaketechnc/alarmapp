@@ -6,7 +6,6 @@ extension String {
     static let keyDefaultToneID    = "defaultToneID"
     static let keyDefaultVolume    = "defaultVolume"
     static let keyDefaultVibration = "defaultVibration"
-    static let keySnoozeDuration   = "snoozeDuration"
 }
 
 // MARK: - Settings View
@@ -16,10 +15,9 @@ struct SettingsView: View {
 
     @Environment(AlarmStore.self) private var store
 
-    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = "radar"
+    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = defaultAlarmToneID
     @AppStorage(.keyDefaultVolume)    private var defaultVolume    = 70.0
     @AppStorage(.keyDefaultVibration) private var defaultVibration = true
-    @AppStorage(.keySnoozeDuration)   private var snoozeDuration   = 5
 
     @State private var showRingtonePicker = false
     #if DEBUG
@@ -40,7 +38,6 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         defaultsSection
-                        snoozeSection
                         permissionsSection
                         legalSection
                         #if DEBUG
@@ -148,26 +145,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Snooze section
-
-    private var snoozeSection: some View {
-        sectionCard(header: "SNOOZE DURATION") {
-            settingsRow(isLast: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Duration")
-                        .font(.system(size: 16))
-                        .foregroundStyle(OB.ink)
-                    Picker("Snooze", selection: $snoozeDuration) {
-                        ForEach([5, 10, 15, 20], id: \.self) { n in
-                            Text("\(n) min").tag(n)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
-        }
-    }
-
     // MARK: - Permissions section
 
     private var permissionsSection: some View {
@@ -244,7 +221,6 @@ struct SettingsView: View {
                         store.backupAlarmKitID = nil
                         store.pendingMission = nil
                         store.firingAlarmID = nil
-                        store.pendingSnooze = nil
                         for item in store.items {
                             var mutable = item
                             mutable.alarmKitID = nil

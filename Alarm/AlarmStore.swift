@@ -10,10 +10,11 @@ struct AlarmItem: Identifiable, Codable, Equatable {
     var days: [Bool]  // 7 elements: Mon–Sun
     var isEnabled: Bool = true
     var missionIDs: [String] = ["math"]
-    var toneID: String = "radar"
+    var toneID: String = defaultAlarmToneID
     var volume: Double = 70
     var vibration: Bool = true
     var alarmKitID: String?
+    var isQuick: Bool = false  // ephemeral: created via QuickAlarmSheet, removed after firing
 
     var timeString: String { String(format: "%d:%02d", hour, minute) }
 
@@ -40,7 +41,6 @@ struct AlarmItem: Identifiable, Codable, Equatable {
 final class AlarmStore {
     var items: [AlarmItem] = []
     var firingAlarmID: String?
-    var pendingSnooze: AlarmItem?
 
     // Persisted: survives app kill so the backup alarm can show the mission on relaunch.
     var pendingMission: AlarmItem? {
@@ -109,6 +109,48 @@ final class AlarmStore {
             log.info("− delete id=\(d.id) time=\(d.timeString) alarmKitID=\(d.alarmKitID ?? "nil")")
         }
         save()
+    }
+
+    // MARK: Mission completion
+
+    /// Finalize a successful mission run:
+    ///   1. cancel the firing primary alarm (prevent AlarmKit re-fire),
+    ///   2. cancel the backup duplicate (prevent fallback re-fire),
+    ///   3. reschedule recurring alarms for the next occurrence / disable one-time alarms,
+    ///   4. clear transient state so the UI dismisses.
+    @MainActor
+    func completeMission() async {
+        log.info("✓ completeMission start")
+
+        if let firingID = firingAlarmID {
+            try? AlarmService.shared.cancel(alarmKitID: firingID)
+        }
+        AlarmService.shared.cancelBackup()
+        backupAlarmKitID = nil
+
+        if let mission = pendingMission,
+           let idx = items.firstIndex(where: { $0.id == mission.id }) {
+            let item = items[idx]
+            let isOneTime = item.days.allSatisfy { !$0 }
+            if item.isQuick {
+                log.info("− quick alarm fired — removing id=\(item.id)")
+                items.remove(at: idx)
+                save()
+            } else if isOneTime {
+                items[idx].isEnabled = false
+                items[idx].alarmKitID = nil
+                update(items[idx])
+            } else {
+                if let uuid = try? await AlarmService.shared.schedule(item) {
+                    items[idx].alarmKitID = uuid.uuidString
+                    update(items[idx])
+                }
+            }
+        }
+
+        firingAlarmID = nil
+        pendingMission = nil
+        log.info("✓ completeMission done")
     }
 
     // MARK: Private persistence helpers

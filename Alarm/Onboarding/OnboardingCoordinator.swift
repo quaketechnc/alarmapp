@@ -36,7 +36,7 @@ final class OnboardingCoordinator {
     var notifPermState: PermState = .prompt
     var alarmGrantedViaSettings = false
     var notifGrantedViaSettings = false
-    var selectedToneID: String = "sunrise"
+    var selectedToneID: String = defaultAlarmToneID
     var volume: Double = 70 {
         didSet { AudioService.shared.setVolume(volume) }
     }

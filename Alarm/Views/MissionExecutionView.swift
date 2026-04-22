@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import CoreMotion
 
 // MARK: - Shell
@@ -6,14 +7,22 @@ import CoreMotion
 struct MissionExecutionView: View {
     let missions: [String]
     let onComplete: () -> Void
-    let onCancel: () -> Void
 
     @State private var currentIndex = 0
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var activeMission: String { currentIndex < missions.count ? missions[currentIndex] : "" }
     private var progress: String { "\(currentIndex + 1)/\(missions.count)" }
     private var progressFraction: Double {
         Double(currentIndex + 1) / Double(max(1, missions.count))
+    }
+
+    private var ringingLabel: String {
+        let cal = Calendar.current
+        let h = cal.component(.hour, from: now)
+        let m = cal.component(.minute, from: now)
+        return String(format: "%d:%02d · ringing", h, m)
     }
 
     var body: some View {
@@ -25,19 +34,19 @@ struct MissionExecutionView: View {
                 missionContent
             }
         }
+        .onReceive(clock) { now = $0 }
     }
 
+    // Task completion is the only way out — no cancel escape (spec requirement).
     private var missionHeader: some View {
         HStack {
-            Button("Cancel alarm", action: onCancel)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(OB.ink3)
             Spacer()
-            Text("7:00 · ringing")
+            Text(ringingLabel)
                 .font(.system(size: 12, weight: .semibold))
                 .kerning(0.4)
                 .foregroundStyle(OB.ink3)
                 .textCase(.uppercase)
+            Spacer()
         }
         .padding(.horizontal, 22)
         .padding(.top, 58)
@@ -92,6 +101,11 @@ struct MissionExecutionView: View {
             TilesMissionView(onSolve: advance)
         case "shake":
             ShakeMissionView(onSolve: advance)
+        case "photo":
+            PhotoMissionView(onSolve: advance)
+        case "off", "":
+            // No mission — complete immediately
+            Color.clear.onAppear { advance() }
         default:
             PhotoMissionView(onSolve: advance)
         }

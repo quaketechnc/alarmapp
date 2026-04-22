@@ -1,6 +1,5 @@
 import ActivityKit
 import AlarmKit
-import AudioToolbox
 import os
 import SwiftUI
 import UserNotifications
@@ -9,69 +8,89 @@ private let log = Logger(subsystem: "com.alarm", category: "service")
 
 // MARK: - Tone model
 
-struct AlarmTone: Identifiable {
-    let id: String
-    let name: String
-    let hint: String
-    let systemSoundName: String
-    let systemSoundID: SystemSoundID  // AudioServices fallback when file path is inaccessible
+struct AlarmTone: Identifiable, Hashable {
+    let id: String        // stem, e.g. "MorningPark_1"
+    let fileName: String  // full bundle filename, e.g. "MorningPark_1.mp3"
+    let name: String      // display, e.g. "Morning Park 1"
+    let hint: String      // category, e.g. "Morning Park"; empty for singletons
 
-    var previewURL: URL? {
-        // Library/Sounds is writable and readable by AlarmKit — check there first.
-        let installed = SoundInstaller.soundsDir.appendingPathComponent("\(systemSoundName).caf")
-        if FileManager.default.fileExists(atPath: installed.path) { return installed }
-        return AlarmTone.findSystemSound(named: systemSoundName)
+    var bundleURL: URL? {
+        let stem = (fileName as NSString).deletingPathExtension
+        let ext  = (fileName as NSString).pathExtension
+        return Bundle.main.url(forResource: stem, withExtension: ext)
     }
-
-    // Candidate paths across iOS versions; we pick the first that exists at runtime.
-    static func findSystemSound(named name: String) -> URL? {
-        let candidates: [String] = [
-            "/System/Library/Audio/UISounds/New/\(name).caf",
-            "/System/Library/Audio/UISounds/New/\(name).m4r",
-            "/System/Library/Audio/UISounds/\(name).caf",
-            "/System/Library/Ringtones/\(name).m4r",
-            "/Library/Ringtones/\(name).m4r",
-        ]
-        return candidates
-            .map { URL(fileURLWithPath: $0) }
-            .first { FileManager.default.fileExists(atPath: $0.path) }
-    }
-
-    #if DEBUG
-    static func discoverSoundPaths() {
-        let log = Logger(subsystem: "com.alarm", category: "sound-discovery")
-        let roots = [
-            "/System/Library/Audio/UISounds",
-            "/System/Library/Audio/UISounds/New",
-            "/System/Library/Ringtones",
-            "/Library/Ringtones",
-        ]
-        for root in roots {
-            let items = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
-            if items.isEmpty {
-                log.debug("🔍 \(root) — not accessible or empty")
-            } else {
-                log.info("🔍 \(root): \(items.prefix(10).joined(separator: ", "))\(items.count > 10 ? " …+\(items.count-10)" : "")")
-            }
-        }
-    }
-    #endif
 }
 
-let allTones: [AlarmTone] = [
-    AlarmTone(id: "radar",       name: "Radar",        hint: "classic alarm",    systemSoundName: "Radar",      systemSoundID: 1304),
-    AlarmTone(id: "apex",        name: "Apex",         hint: "rising tones",     systemSoundName: "Apex",       systemSoundID: 1305),
-    AlarmTone(id: "beacon",      name: "Beacon",       hint: "soft pulses",      systemSoundName: "Beacon",     systemSoundID: 1306),
-    AlarmTone(id: "chimes",      name: "Chimes",       hint: "gentle bells",     systemSoundName: "Chimes",     systemSoundID: 1307),
-    AlarmTone(id: "cosmic",      name: "Cosmic",       hint: "deep space",       systemSoundName: "Cosmic",     systemSoundID: 1308),
-    AlarmTone(id: "hillside",    name: "Hillside",     hint: "nature",           systemSoundName: "Hillside",   systemSoundID: 1309),
-    AlarmTone(id: "night-owl",   name: "Night Owl",    hint: "mellow",           systemSoundName: "Night Owl",  systemSoundID: 1310),
-    AlarmTone(id: "ripples",     name: "Ripples",      hint: "water",            systemSoundName: "Ripples",    systemSoundID: 1311),
-    AlarmTone(id: "sencha",      name: "Sencha",       hint: "calm",             systemSoundName: "Sencha",     systemSoundID: 1312),
-    AlarmTone(id: "slow-rise",   name: "Slow Rise",    hint: "gradual build",    systemSoundName: "Slow Rise",  systemSoundID: 1313),
-    AlarmTone(id: "uplift",      name: "Uplift",       hint: "energetic",        systemSoundName: "Uplift",     systemSoundID: 1314),
-    AlarmTone(id: "waves",       name: "Waves",        hint: "ocean",            systemSoundName: "Waves",      systemSoundID: 1315),
-]
+// MARK: - Tone catalog (bundle-discovered)
+
+/// ID used when no user selection exists, or stored selection is stale.
+/// Matches the stem of the default audio file in the bundle.
+let defaultAlarmToneID = "LiveTheMoment"
+
+/// All audio tones discovered in the app bundle, alphabetized with
+/// `Awakening` pinned first. Evaluated once at process start.
+let allTones: [AlarmTone] = {
+    guard let root = Bundle.main.resourcePath else { return [] }
+    let supported: Set<String> = ["mp3", "m4a", "caf", "wav", "aiff", "aif"]
+    let items = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
+    let files = items
+        .filter { supported.contains(($0 as NSString).pathExtension.lowercased()) }
+        .sorted(by: toneOrder)
+    return files.map(makeTone(fileName:))
+}()
+
+private func makeTone(fileName: String) -> AlarmTone {
+    let stem = (fileName as NSString).deletingPathExtension
+    return AlarmTone(
+        id: stem,
+        fileName: fileName,
+        name: prettyName(from: stem),
+        hint: categoryHint(for: stem)
+    )
+}
+
+/// "MorningPark_1" → "Morning Park 1", "loud3" → "Loud 3", "HappyClaps" → "Happy Claps".
+private func prettyName(from stem: String) -> String {
+    var out = ""
+    var prev: Character = " "
+    for ch in stem {
+        if ch == "_" {
+            out.append(" ")
+        } else {
+            if (ch.isUppercase && prev.isLowercase) || (ch.isNumber && prev.isLetter) {
+                out.append(" ")
+            }
+            out.append(ch)
+        }
+        prev = ch
+    }
+    // Upper-case the first visible letter.
+    if let first = out.firstIndex(where: { !$0.isWhitespace }) {
+        out.replaceSubrange(first...first, with: String(out[first]).uppercased())
+    }
+    return out
+}
+
+/// Strip the trailing `_N` or `N` suffix; return base name if different.
+private func categoryHint(for stem: String) -> String {
+    if let under = stem.firstIndex(of: "_") {
+        return prettyName(from: String(stem[..<under]))
+    }
+    let trailing = stem.reversed().prefix(while: { $0.isNumber }).count
+    if trailing > 0, trailing < stem.count {
+        return prettyName(from: String(stem.dropLast(trailing)))
+    }
+    return ""
+}
+
+/// "Awakening" pinned first, then case-insensitive natural sort.
+private func toneOrder(_ a: String, _ b: String) -> Bool {
+    let aw = "Awakening"
+    let aIsAw = a.hasPrefix(aw)
+    let bIsAw = b.hasPrefix(aw)
+    if aIsAw != bIsAw { return aIsAw }
+    return a.localizedStandardCompare(b) == .orderedAscending
+}
 
 // MARK: - Authorization state
 
@@ -146,18 +165,23 @@ final class AlarmService {
 
     // MARK: Scheduling
 
-    /// One-time alarm `delay` seconds from now with the same tone/missions as `item`.
-    /// Cancel when the user solves the mission so it doesn't fire unnecessarily.
-    // Fixed slot for the backup alarm — only one backup exists at a time, so one ID suffices.
+    // Fixed slot for the backup/duplicate alarm — only one backup exists at a time.
+    // Stable UUID so we can cancel it even after app relaunch without persisting the ID.
     static let backupSlotID = UUID(uuidString: "BACA1A12-0000-0000-0000-000000000001")!
 
-    func scheduleBackup(for item: AlarmItem, delay: TimeInterval = 10) async throws -> UUID {
+    // Spec: 10–30s window. 20s gives the user enough time to re-open the app
+    // before the duplicate fires, while still being short enough that a killed
+    // app recovers the mission flow quickly.
+    nonisolated static let backupDelaySeconds: TimeInterval = 20
+
+    /// Reschedule a duplicate of `item` `delay` seconds from now. If the app is
+    /// killed while the user is mid-mission, this duplicate re-triggers the flow
+    /// via AlarmKit's system-level alerting. The caller is responsible for
+    /// cancelling it on successful mission completion.
+    func scheduleBackup(for item: AlarmItem, delay: TimeInterval = backupDelaySeconds) async throws -> UUID {
         let backupID = AlarmService.backupSlotID
         log.info("+ scheduleBackup itemID=\(item.id) delay=\(Int(delay))s backupID=\(backupID)")
         let fireDate = Date().addingTimeInterval(delay)
-        let sound: AlertConfiguration.AlertSound = allTones
-            .first(where: { $0.id == item.toneID })
-            .map { .named($0.systemSoundName) } ?? .default
         let intent = SolveMissionIntent()
         let config = AlarmManager.AlarmConfiguration<AlarmMeta>.alarm(
             schedule: .fixed(fireDate),
@@ -168,7 +192,7 @@ final class AlarmService {
             ),
             stopIntent: intent,
             secondaryIntent: intent,
-            sound: sound
+            sound: alertSound(for: item)
         )
         _ = try await AlarmManager.shared.schedule(id: backupID, configuration: config)
         log.info("✓ backup scheduled backupID=\(backupID)")
@@ -191,17 +215,14 @@ final class AlarmService {
                 time: .init(hour: item.hour, minute: item.minute),
                 repeats: .weekly(activeDays)
             ))
-        let sound: AlertConfiguration.AlertSound = allTones
-            .first(where: { $0.id == item.toneID })
-            .map { .named($0.systemSoundName) } ?? .default
 
         let intent = SolveMissionIntent()
         let config = AlarmManager.AlarmConfiguration<AlarmMeta>.alarm(
             schedule: schedule,
             attributes: attrs,
             stopIntent: intent,
-            secondaryIntent: intent,
-            sound: sound
+            secondaryIntent: nil,
+            sound: alertSound(for: item)
         )
         _ = try await AlarmManager.shared.schedule(id: alarmID, configuration: config)
         log.info("✓ scheduled alarmKitID=\(alarmID)")
@@ -215,6 +236,32 @@ final class AlarmService {
         }
         log.info("✗ cancel alarmKitID=\(alarmKitID)")
         try AlarmManager.shared.cancel(id: uuid)
+    }
+
+    /// Silence the system-level alert without removing the alarm.
+    /// For `.relative(.weekly)` alarms AlarmKit returns to `.scheduled`; for
+    /// `.fixed` alarms it transitions to completed. Callers rely on this to
+    /// stop the OS alarm sound while the in-app `AudioService` takes over —
+    /// otherwise both would play simultaneously.
+    func stop(alarmKitID: String) {
+        guard let uuid = UUID(uuidString: alarmKitID) else { return }
+        do {
+            try AlarmManager.shared.stop(id: uuid)
+            log.info("◼ stop alarmKitID=\(alarmKitID)")
+        } catch {
+            log.warning("◼ stop failed alarmKitID=\(alarmKitID) err=\(error)")
+        }
+    }
+
+    /// Idempotent — safe even if no backup is currently scheduled.
+    func cancelBackup() {
+        try? AlarmManager.shared.cancel(id: AlarmService.backupSlotID)
+    }
+
+    private func alertSound(for item: AlarmItem) -> AlertConfiguration.AlertSound {
+        let tone = allTones.first { $0.id == item.toneID }
+            ?? allTones.first { $0.id == defaultAlarmToneID }
+        return tone.map { .named($0.fileName) } ?? .default
     }
 
     func nextFireDate(for item: AlarmItem) -> Date {

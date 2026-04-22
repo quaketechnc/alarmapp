@@ -41,7 +41,7 @@ struct CustomAlarmView: View {
             _daily      = State(initialValue: true)
             _days       = State(initialValue: [true, true, true, true, true, false, false])
             _missionIDs = State(initialValue: ["math"])
-            _toneID     = State(initialValue: "sunrise")
+            _toneID     = State(initialValue: UserDefaults.standard.string(forKey: .keyDefaultToneID) ?? defaultAlarmToneID)
             _volume     = State(initialValue: 70)
             _vibration  = State(initialValue: true)
         }
@@ -346,7 +346,7 @@ struct CustomAlarmView: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(OB.ink)
                         Spacer()
-                        Text(allTones.first { $0.id == toneID }?.name ?? "Sunrise")
+                        Text(allTones.first { $0.id == toneID }?.name ?? "Default")
                             .font(.system(size: 16))
                             .foregroundStyle(OB.ink3)
                         Image(systemName: "chevron.right")

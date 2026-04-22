@@ -39,16 +39,15 @@ struct RingtoneScreen: View {
                 .background(OB.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .padding(.top, 18)
 
-                // Tone list
+            ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
                     ForEach(Array(allTones.enumerated()), id: \.element.id) { index, tone in
                         toneRow(tone: tone, isLast: index == allTones.count - 1)
                     }
                 }
-                .background(OB.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .padding(.top, 14)
-
-                Spacer()
+            }
+            .background(OB.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(.top, 14)
         }
     }
 
@@ -83,9 +82,11 @@ struct RingtoneScreen: View {
                 Text(tone.name)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(OB.ink)
-                Text(tone.hint)
-                    .font(.system(size: 12))
-                    .foregroundStyle(OB.ink3)
+                if !tone.hint.isEmpty {
+                    Text(tone.hint)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OB.ink3)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -123,7 +124,7 @@ struct RingtoneScreen: View {
 
 #Preview {
     RingtoneScreen(
-        selectedToneID: .constant("sunrise"),
+        selectedToneID: .constant(defaultAlarmToneID),
         volume: .constant(70),
         playTone: { _ in }, stopTone: {}
     )

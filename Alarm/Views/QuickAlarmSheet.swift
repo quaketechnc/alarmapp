@@ -5,7 +5,7 @@ struct QuickAlarmSheet: View {
 
     @Environment(AlarmStore.self) private var store
 
-    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = "sunrise"
+    @AppStorage(.keyDefaultToneID)    private var defaultToneID    = defaultAlarmToneID
     @AppStorage(.keyDefaultVolume)    private var defaultVolume    = 70.0
     @AppStorage(.keyDefaultVibration) private var defaultVibration = true
 
@@ -140,7 +140,7 @@ struct QuickAlarmSheet: View {
                     .kerning(0.6)
                     .foregroundStyle(OB.ink3)
                 Spacer()
-                Text(allTones.first { $0.id == defaultToneID }?.name ?? "Sunrise")
+                Text(allTones.first { $0.id == defaultToneID }?.name ?? "Default")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(OB.ink3)
             }
@@ -175,10 +175,11 @@ struct QuickAlarmSheet: View {
             minute: cal.component(.minute, from: fireDate),
             days: Array(repeating: false, count: 7),
             isEnabled: true,
-            missionIDs: ["math"],
+            missionIDs: ["off"],
             toneID: defaultToneID,
             volume: volume,
-            vibration: vibration
+            vibration: vibration,
+            isQuick: true
         )
         store.add(item)
         let idx = store.items.count - 1
