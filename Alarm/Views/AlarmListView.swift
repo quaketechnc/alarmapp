@@ -20,7 +20,6 @@ struct AlarmListView: View {
             VStack(spacing: 0) {
                 listHeader
                     .padding(.horizontal, 22)
-                    .padding(.top, 58)
                     .padding(.bottom, 8)
 
                 List {
@@ -354,16 +353,21 @@ struct AlarmCard: View {
     }
 
     private func alarmChip(icon: String, label: String, fg: Color, bg: Color) -> some View {
-        Label(label, systemImage: icon)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(fg)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(bg, in: Capsule())
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+            Text(label)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(fg)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(bg, in: Capsule())
     }
 }
 
 #Preview {
-    AlarmListView()
-        .environment(AlarmStore())
+//    AlarmListView()
+//        .environment(AlarmStore())
+    
+    AlarmCard(alarm: AlarmItem(hour: 18, minute: 24, days: [true,true,true,true,true,true,true], selectedMissions: [AlarmMission(from: .off), AlarmMission(from: .math)] )) {}
 }

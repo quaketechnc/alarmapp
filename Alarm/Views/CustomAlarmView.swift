@@ -365,10 +365,6 @@ struct CustomAlarmView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(
-                        daily ? OB.ink : Color.clear,
-                        in: Capsule()
-                    )
                     .foregroundStyle(daily ? .white : OB.ink2)
                 }
                 .buttonStyle(ScaleButtonStyle())
