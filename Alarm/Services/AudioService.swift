@@ -35,6 +35,15 @@ final class AudioService {
         }
         log.info("▶ resolved tone='\(tone.id)' url=\(url.lastPathComponent)")
 
+        // Idempotent: if the same tone is already playing, just re-push volume
+        // and return. The rescue-loop calls play() every 3s, and without this
+        // guard we'd restart the player from 0 each tick.
+        if isPlaying, currentToneID == tone.id, player?.isPlaying == true {
+            log.info("▶ already playing same tone — volume refresh only")
+            await MainActor.run { Self.setSystemVolume(Float(volume / 100)) }
+            return
+        }
+
         stop()
         await activateSessionAsync()
         await MainActor.run { Self.setSystemVolume(Float(volume / 100)) }

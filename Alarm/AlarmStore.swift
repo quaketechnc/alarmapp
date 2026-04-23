@@ -8,6 +8,11 @@ final class AlarmStore {
     var items: [AlarmItem] = []
     var firingAlarmID: String?
 
+    /// Transient: true while `MissionExecutionView` is on screen. The
+    /// rescue-loop suppresses new AlarmKit rescues while solving, so we don't
+    /// interrupt the user mid-mission with a fresh system alert.
+    var isOnMissionScreen: Bool = false
+
     // Persisted: survives app kill so the backup alarm can show the mission on relaunch.
     var pendingMission: AlarmItem? {
         didSet {
@@ -15,17 +20,16 @@ final class AlarmStore {
             persist(pendingMission, key: Self.udMission)
         }
     }
-    // Persisted: lets us cancel the backup alarm even after app relaunch.
-    var backupAlarmKitID: String? {
-        didSet {
-            log.info("~ backupAlarmKitID → \(self.backupAlarmKitID ?? "nil")")
-            UserDefaults.standard.set(backupAlarmKitID, forKey: Self.udBackup)
-        }
+    /// item.id.uuidString → Date of last successful completion. Used for
+    /// cold-launch missed-alarm detection so we don't treat an already-solved
+    /// alarm as pending.
+    var lastCompletedFireDate: [String: Date] = [:] {
+        didSet { persistLastCompleted() }
     }
 
     private static let udKey    = "alarmItems"
     private static let udMission = "pendingMission"
-    private static let udBackup  = "backupAlarmKitID"
+    private static let udLastCompleted = "lastCompletedFireDate"
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.udKey),
@@ -36,20 +40,20 @@ final class AlarmStore {
             items = []
             log.info("init: no saved alarms")
         }
-        pendingMission   = load(AlarmItem.self, key: Self.udMission)
-        backupAlarmKitID = UserDefaults.standard.string(forKey: Self.udBackup)
+        pendingMission = load(AlarmItem.self, key: Self.udMission)
+        lastCompletedFireDate = (load([String: Date].self, key: Self.udLastCompleted)) ?? [:]
         if let m = pendingMission {
             log.info("init: restored pendingMission id=\(m.id) time=\(m.timeString)")
         }
-        if let b = backupAlarmKitID {
-            log.info("init: restored backupAlarmKitID=\(b)")
+        if !lastCompletedFireDate.isEmpty {
+            log.info("init: restored lastCompletedFireDate (\(self.lastCompletedFireDate.count) entries)")
         }
     }
 
-    /// Re-read pendingMission/backupAlarmKitID from UserDefaults. Call on
-    /// scene activation: `SolveMissionIntent` writes these from outside the
-    /// @Observable store, so without a reload the main UI stays stale — e.g.
-    /// RingingView doesn't appear after an intent-driven return to foreground.
+    /// Re-read pendingMission from UserDefaults. Call on scene activation:
+    /// `SolveMissionIntent` writes it from outside the @Observable store, so
+    /// without a reload the UI stays stale — e.g. RingingView doesn't appear
+    /// after an intent-driven return to foreground.
     @MainActor
     func reloadPersistedTransients() {
         let freshMission = load(AlarmItem.self, key: Self.udMission)
@@ -57,11 +61,36 @@ final class AlarmStore {
             log.info("↻ reload: pendingMission \(self.pendingMission?.id.uuidString ?? "nil") → \(freshMission?.id.uuidString ?? "nil")")
             pendingMission = freshMission
         }
-        let freshBackup = UserDefaults.standard.string(forKey: Self.udBackup)
-        if freshBackup != backupAlarmKitID {
-            log.info("↻ reload: backupAlarmKitID \(self.backupAlarmKitID ?? "nil") → \(freshBackup ?? "nil")")
-            backupAlarmKitID = freshBackup
+    }
+
+    /// Scan enabled alarms for a recent past fire that doesn't have a
+    /// corresponding AlarmKit-scheduled alarm (= already fired) and wasn't
+    /// completed (`lastCompletedFireDate` older than the fire time). If one
+    /// matches within the last 10 minutes, return it so the rescue-loop can
+    /// adopt it as `pendingMission`.
+    ///
+    /// Handles the case where the user dismissed a system alarm with the
+    /// hardware volume button on the lock screen while the app was killed:
+    /// the intent never ran, so nothing was persisted, but the alarm clearly
+    /// fired and wasn't solved.
+    @MainActor
+    func detectMissedAlarm() async -> AlarmItem? {
+        let scheduled = await AlarmService.shared.scheduledAlarmIDs()
+        let now = Date()
+        let cutoff: TimeInterval = 10 * 60  // 10 min
+
+        for item in items where item.isEnabled {
+            guard let prev = AlarmService.shared.previousFireDate(for: item) else { continue }
+            let age = now.timeIntervalSince(prev)
+            guard age >= 0, age < cutoff else { continue }
+            // Still scheduled in AlarmKit → hasn't fired yet (or is currently alerting, handled separately).
+            if let kitID = item.alarmKitID, scheduled.contains(kitID) { continue }
+            // Already completed at-or-after this fire time.
+            if let last = lastCompletedFireDate[item.id.uuidString], last >= prev { continue }
+            log.info("⚠ detectMissedAlarm: item=\(item.id) prevFire=\(prev) age=\(Int(age))s")
+            return item
         }
+        return nil
     }
 
     // MARK: CRUD
@@ -109,8 +138,14 @@ final class AlarmStore {
         if let firingID = firingAlarmID {
             try? AlarmService.shared.cancel(alarmKitID: firingID)
         }
-        AlarmService.shared.cancelBackup()
-        backupAlarmKitID = nil
+        AlarmService.shared.cancelRescue()
+        AudioService.shared.stop()
+
+        if let mission = pendingMission {
+            // Record completion so cold-launch missed-alarm detection won't
+            // re-trigger this alarm.
+            lastCompletedFireDate[mission.id.uuidString] = Date()
+        }
 
         if let mission = pendingMission,
            let idx = items.firstIndex(where: { $0.id == mission.id }) {
@@ -141,6 +176,10 @@ final class AlarmStore {
 
     private func save() {
         persist(items, key: Self.udKey)
+    }
+
+    private func persistLastCompleted() {
+        persist(lastCompletedFireDate, key: Self.udLastCompleted)
     }
 
     private func persist<T: Encodable>(_ value: T?, key: String) {

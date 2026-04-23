@@ -12,6 +12,8 @@ struct RingingView: View {
     var volume: Double = 70
     let onDismiss: () -> Void
 
+    @Environment(AlarmStore.self) private var store
+
     @State private var now = Date()
     @State private var showMission = false
     @State private var pulseScale: CGFloat = 1.0
@@ -87,33 +89,38 @@ struct RingingView: View {
         }
         .onAppear {
             pulseScale = 1.3
-            guard let toneID = toneID else {
+            if let toneID = toneID {
+                log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% audio.isPlaying=\(AudioService.shared.isPlaying)")
+                // Foreground + key window — MPVolumeView push works here.
+                AudioService.shared.setVolume(volume)
+                // Belt-and-braces: if rescue-loop hasn't started audio yet,
+                // start it now so the user doesn't sit in silence.
+                Task {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    if !AudioService.shared.isPlaying {
+                        log.info("🔔 RingingView fallback play")
+                        AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+                    }
+                }
+            } else {
                 log.info("🔔 RingingView appear without tone")
-                return 
             }
-            log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions) audio.isPlaying=\(AudioService.shared.isPlaying)")
-            // App is foreground with a key window — MPVolumeView trick works.
-            // Push system volume up to the alarm's configured level so the
-            // user hears AlarmKit (which is still playing) and/or our audio
-            // at the intended loudness, even if they'd silenced the device.
-            AudioService.shared.setVolume(volume)
-            // If AudioService isn't already playing (cold-launch without
-            // intent having run), start it as a fallback. AlarmKit is still
-            // playing, so audio never fully stops — this is belt-and-braces.
-            Task {
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                if !AudioService.shared.isPlaying {
-                    log.info("🔔 RingingView fallback play")
-                    AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+
+            // Auto-push to MissionExecutionView after a 0.6s intro unless the
+            // only mission is 'off' (then user taps Dismiss manually).
+            if selectedMission.id != .off {
+                Task {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    if !showMission {
+                        showMission = true
+                    }
                 }
             }
         }
-        .onDisappear {
-            log.info("🔕 RingingView disappear")
-            AudioService.shared.stop()
-        }
         .onReceive(timer) { now = $0 }
-        .fullScreenCover(isPresented: $showMission) {
+        .fullScreenCover(isPresented: $showMission, onDismiss: {
+            store.isOnMissionScreen = false
+        }) {
             MissionExecutionView(
                 missions: missions,
                 startingMission: selectedMission,
@@ -122,6 +129,7 @@ struct RingingView: View {
                     onDismiss()
                 }
             )
+            .onAppear { store.isOnMissionScreen = true }
         }
     }
     
@@ -213,4 +221,5 @@ struct RingingView: View {
         AlarmMission(from: .type)
     ],
                 toneID: nil) { print("done") }
+    .environment(AlarmStore())
 }

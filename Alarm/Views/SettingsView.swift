@@ -218,7 +218,6 @@ struct SettingsView: View {
                     debugClearing = true
                     Task {
                         await AlarmService.shared.cancelAllAlarms()
-                        store.backupAlarmKitID = nil
                         store.pendingMission = nil
                         store.firingAlarmID = nil
                         for item in store.items {

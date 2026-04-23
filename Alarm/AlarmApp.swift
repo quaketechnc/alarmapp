@@ -1,13 +1,31 @@
 import AVFoundation
 import os
 import SwiftUI
+import UIKit
 import UserNotifications
 
 private let log = Logger(subsystem: "com.alarm", category: "app")
 
+/// Shared state between `alarmEventsLoop` and `rescueLoop`, avoiding async
+/// snapshot calls into `AlarmManager.alarmUpdates` (which only yields on
+/// change — a fresh subscriber would block forever waiting for the first
+/// event). `alarmEventsLoop` maintains these in response to stream events.
+@MainActor
+private final class AlarmKitLocalState {
+    /// Is any alarm currently `.alerting`?
+    var isAlerting: Bool = false
+    /// Fire date of the currently queued rescue alarm, or nil if none.
+    var rescueFireDate: Date? = nil
+    var rescuePending: Bool {
+        guard let d = rescueFireDate else { return false }
+        return d > Date()
+    }
+}
+
 @main
 struct AlarmApp: App {
     @State private var store = AlarmStore()
+    @State private var kitState = AlarmKitLocalState()
 
     var body: some Scene {
         WindowGroup {
@@ -15,8 +33,8 @@ struct AlarmApp: App {
                 .environment(store)
                 .task { SoundInstaller.installIfNeeded() }
                 .task { primeAudioSession() }
-                .task { await watchAlarms() }
-                .task { await watchdog() }
+                .task { await alarmEventsLoop() }
+                .task { await rescueLoop() }
         }
     }
 
@@ -32,95 +50,104 @@ struct AlarmApp: App {
         }
     }
 
-    // MARK: - Watchdog
-    //
-    // While the app is alive and the user is mid-mission we keep a duplicate
-    // alarm scheduled `backupDelaySeconds` in the future. Each tick we cancel
-    // the previous duplicate and schedule a fresh one, so the duplicate is
-    // always "about to fire in ≤ backupDelaySeconds".
-    //
-    // If the app dies between ticks, iOS still owns the duplicate via
-    // AlarmKit and fires it, re-launching us into the ringing/mission flow.
-    // The duplicate is cancelled on successful mission completion.
+    // MARK: - Alarm events (AlarmKit → store)
 
-    private static let watchdogTickSeconds: UInt64 = 10
+    private func alarmEventsLoop() async {
+        log.info("alarmEventsLoop: started")
+        for await firingID in AlarmService.shared.alertingAlarmIDStream {
+            await handleStreamEvent(firingID: firingID)
+        }
+        log.info("alarmEventsLoop: ended")
+    }
 
-    private func watchdog() async {
+    @MainActor
+    private func handleStreamEvent(firingID: String?) async {
+        guard let id = firingID else {
+            if kitState.isAlerting {
+                log.info("🔕 AlarmKit no longer alerting")
+            }
+            kitState.isAlerting = false
+            return
+        }
+
+        kitState.isAlerting = true
+
+        // Rescue fired → clear rescue fireDate; pendingMission should already be set.
+        if id == AlarmService.rescueSlotID.uuidString {
+            log.info("🔔 rescue alarm fired")
+            kitState.rescueFireDate = nil
+            return
+        }
+
+        // Primary fire: adopt item as pendingMission.
+        guard let item = store.items.first(where: { $0.alarmKitID == id }) else {
+            log.warning("⚠ orphaned alerting alarm id=\(id) — cancelling")
+            try? AlarmService.shared.cancel(alarmKitID: id)
+            return
+        }
+        log.info("✓ adopted pendingMission id=\(item.id) time=\(item.timeString)")
+        store.firingAlarmID = id
+        store.pendingMission = item
+        // Any prior rescue is stale — this primary just woke the user.
+        AlarmService.shared.cancelRescue()
+        kitState.rescueFireDate = nil
+    }
+
+    // MARK: - Rescue loop
+
+    private static let rescueTickSeconds: UInt64 = 3
+
+    private func rescueLoop() async {
+        log.info("rescueLoop: started")
+
+        // Cold-launch catch-up.
+        await MainActor.run {
+            store.reloadPersistedTransients()
+        }
+        if await store.pendingMission == nil {
+            if let missed = await store.detectMissedAlarm() {
+                log.info("🔁 rescueLoop: adopting missed alarm id=\(missed.id)")
+                await MainActor.run { store.pendingMission = missed }
+            }
+        }
+
         while !Task.isCancelled {
-            await refreshBackupIfRinging()
-            try? await Task.sleep(nanoseconds: Self.watchdogTickSeconds * 1_000_000_000)
+            await rescueTick()
+            try? await Task.sleep(nanoseconds: Self.rescueTickSeconds * 1_000_000_000)
         }
     }
 
     @MainActor
-    private func refreshBackupIfRinging() async {
+    private func rescueTick() async {
+        store.reloadPersistedTransients()
         guard let item = store.pendingMission else { return }
-        AlarmService.shared.cancelBackup()
-        do {
-            let id = try await AlarmService.shared.scheduleBackup(for: item)
-            store.backupAlarmKitID = id.uuidString
-            log.info("✓ watchdog: backup refreshed id=\(id)")
-        } catch {
-            log.error("✗ watchdog: backup failed \(error)")
+
+        let isAlerting = kitState.isAlerting
+        let rescuePending = kitState.rescuePending
+        let isForeground = UIApplication.shared.applicationState == .active
+
+        log.info("⏱ rescueTick item=\(item.id) alerting=\(isAlerting) rescuePending=\(rescuePending) fg=\(isForeground) audio=\(AudioService.shared.isPlaying) missionScreen=\(self.store.isOnMissionScreen)")
+
+        // (A) Push system volume (idempotent; no-op without key window).
+        AudioService.shared.setVolume(item.volume)
+
+        // (B) Foreground audio fallback. Skip while AlarmKit is alerting —
+        // they'd fight over the audio session.
+        if isForeground, !isAlerting, !AudioService.shared.isPlaying {
+            log.info("🔊 rescueTick: starting foreground audio")
+            AudioService.shared.play(toneID: item.toneID, volume: item.volume, loops: -1)
         }
-    }
 
-    // MARK: - Alarm watcher
-
-    private func watchAlarms() async {
-        log.info("watchAlarms: stream started")
-        for await firingID in AlarmService.shared.alertingAlarmIDStream {
-            guard let id = firingID else {
-                // Stream yielded nil. Two possibilities:
-                //  a) completeMission() just ran → pendingMission is cleared
-                //     → nothing to do (expected).
-                //  b) AlarmKit was silenced externally (hardware volume-down
-                //     on lock screen, "Stop" swipe on the system banner, etc.)
-                //     while the user still owes the mission. In that case
-                //     pendingMission is still set — AlarmKit has released its
-                //     audio session, so WE pick up the ringing via
-                //     AudioService (UIBackgroundModes:audio keeps it playing
-                //     even if the app is still backgrounded) and refresh the
-                //     backup alarm so app-kill still recovers.
-                if let item = store.pendingMission {
-                    log.info("🔕 external silence detected — taking over audio (item=\(item.id))")
-                    await AudioService.shared.playAsync(
-                        toneID: item.toneID,
-                        volume: item.volume,
-                        loops: -1
-                    )
-                    await refreshBackupIfRinging()
-                } else {
-                    log.debug("watchAlarms: stream yielded nil (expected after completeMission)")
-                }
-                continue
+        // (C) Queue a rescue alarm iff: AlarmKit not alerting, no rescue
+        // currently pending, and the user isn't already on the mission screen.
+        if !isAlerting, !rescuePending, !store.isOnMissionScreen {
+            do {
+                _ = try await AlarmService.shared.scheduleRescue(for: item)
+                kitState.rescueFireDate = Date().addingTimeInterval(AlarmService.rescueDelaySeconds)
+                log.info("✓ rescueTick: rescue queued, fires at \(self.kitState.rescueFireDate!)")
+            } catch {
+                log.error("✗ rescueTick: scheduleRescue failed \(error)")
             }
-            log.info("🔔 alarm alerting: alarmKitID=\(id)")
-
-            let item = store.items.first { $0.alarmKitID == id }
-                ?? (id == store.backupAlarmKitID ? store.pendingMission : nil)
-
-            guard let item else {
-                log.warning("⚠ orphaned alarm — cancelling alarmKitID=\(id)")
-                try? AlarmService.shared.cancel(alarmKitID: id)
-                continue
-            }
-            log.info("✓ resolved item id=\(item.id) time=\(item.timeString)")
-
-            // Do NOT stop AlarmKit and do NOT start our AudioService here.
-            // AlarmKit plays the real tone at alarm-priority (bypasses media
-            // volume = 0), which is the only way to guarantee the user wakes.
-            // Our AudioService only kicks in after the user has interacted —
-            // see SolveMissionIntent (slide-stop) and MissionExecutionView,
-            // both of which run with the app in foreground where
-            // MPVolumeView / AVAudioSession work reliably.
-            store.firingAlarmID = id
-            store.pendingMission = item
-
-            // The primary just fired; whatever backup we had is now stale.
-            AlarmService.shared.cancelBackup()
-            store.backupAlarmKitID = nil
         }
-        log.info("watchAlarms: stream ended")
     }
 }

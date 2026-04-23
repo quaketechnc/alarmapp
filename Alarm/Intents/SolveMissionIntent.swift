@@ -45,12 +45,9 @@ struct SolveMissionIntent: LiveActivityIntent {
             log.info("▶ [intent] AudioService.play returned — isPlaying=\(AudioService.shared.isPlaying)")
         }
 
-        do {
-            let id = try await AlarmService.shared.scheduleBackup(for: item, delay: 15)
-            await log.info("▶ [intent] backup scheduled id=\(id)")
-        } catch {
-            await log.error("▶ [intent] backup schedule failed: \(error)")
-        }
+        // Rescue scheduling is owned by the in-app rescue-loop (AlarmApp.rescueLoop).
+        // It runs every 3s while pendingMission != nil — it'll pick up and
+        // schedule rescues as needed once the app is alive.
 
         await log.info("▶ [intent] perform END")
         return .result()

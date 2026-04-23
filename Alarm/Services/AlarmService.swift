@@ -158,24 +158,28 @@ final class AlarmService {
 
     // MARK: Scheduling
 
-    // Fixed slot for the backup/duplicate alarm — only one backup exists at a time.
+    // Fixed slot for the rescue alarm — only one rescue exists at a time.
     // Stable UUID so we can cancel it even after app relaunch without persisting the ID.
-    static let backupSlotID = UUID(uuidString: "BACA1A12-0000-0000-0000-000000000001")!
+    static let rescueSlotID = UUID(uuidString: "BACA1A12-0000-0000-0000-000000000001")!
 
-    // Spec: 10–30s window. 20s gives the user enough time to re-open the app
-    // before the duplicate fires, while still being short enough that a killed
-    // app recovers the mission flow quickly.
-    nonisolated static let backupDelaySeconds: TimeInterval = 20
+    // Short delay — the rescue-loop tick is 3s, so the rescue should fire
+    // before the next tick would schedule another one. 5s gives AlarmKit time
+    // to wake the system + show the alert UI.
+    nonisolated static let rescueDelaySeconds: TimeInterval = 5
 
-    /// Reschedule a duplicate of `item` `delay` seconds from now. If the app is
-    /// killed while the user is mid-mission, this duplicate re-triggers the flow
-    /// via AlarmKit's system-level alerting. The caller is responsible for
-    /// cancelling it on successful mission completion.
-    func scheduleBackup(for item: AlarmItem, delay: TimeInterval = backupDelaySeconds) async throws -> UUID {
-        let backupID = AlarmService.backupSlotID
-        log.info("+ scheduleBackup itemID=\(item.id) delay=\(Int(delay))s backupID=\(backupID)")
+    /// Reschedule a rescue copy of `item` `delay` seconds from now. Used by
+    /// the rescue-loop: while `pendingMission` is set and AlarmKit is not
+    /// currently alerting (e.g. user silenced it with the hardware volume
+    /// button on the lock screen, or the app was killed), we keep requeuing a
+    /// fresh alarm so iOS re-wakes the screen. Cancelled when the mission
+    /// completes.
+    func scheduleRescue(for item: AlarmItem, delay: TimeInterval = rescueDelaySeconds) async throws -> UUID {
+        let rescueID = AlarmService.rescueSlotID
+        log.info("+ scheduleRescue itemID=\(item.id) delay=\(Int(delay))s rescueID=\(rescueID)")
+        // Always cancel the previous rescue first — AlarmKit.schedule with the
+        // same id replaces, but cancelling explicitly is clearer.
+        try? AlarmManager.shared.cancel(id: rescueID)
         let fireDate = Date().addingTimeInterval(delay)
-        // Intent resolves the item via pendingMission fallback when the backup fires.
         let intent = SolveMissionIntent(alarmIDString: item.alarmKitID ?? item.id.uuidString)
         let config = AlarmManager.AlarmConfiguration<AlarmMeta>.alarm(
             schedule: .fixed(fireDate),
@@ -188,9 +192,9 @@ final class AlarmService {
             secondaryIntent: nil,
             sound: alertSound(for: item)
         )
-        _ = try await AlarmManager.shared.schedule(id: backupID, configuration: config)
-        log.info("✓ backup scheduled backupID=\(backupID)")
-        return backupID
+        _ = try await AlarmManager.shared.schedule(id: rescueID, configuration: config)
+        log.info("✓ rescue scheduled rescueID=\(rescueID)")
+        return rescueID
     }
 
     func schedule(_ item: AlarmItem) async throws -> UUID {
@@ -247,9 +251,35 @@ final class AlarmService {
         }
     }
 
-    /// Idempotent — safe even if no backup is currently scheduled.
-    func cancelBackup() {
-        try? AlarmManager.shared.cancel(id: AlarmService.backupSlotID)
+    /// Idempotent — safe even if no rescue is currently scheduled.
+    func cancelRescue() {
+        try? AlarmManager.shared.cancel(id: AlarmService.rescueSlotID)
+    }
+
+    /// Snapshot of all AlarmKit-scheduled alarm IDs (UUID strings). Used by
+    /// cold-launch missed-alarm detection: if one of our enabled items has
+    /// `alarmKitID` not present in this set, AlarmKit has already fired and
+    /// discarded it.
+    ///
+    /// NOTE: `alarmUpdates` only yields on state change. On subscribe it
+    /// yields the current state once — so a single pass here works for a
+    /// snapshot, but we use a timeout as a safety net to avoid hanging.
+    func scheduledAlarmIDs() async -> Set<String> {
+        await withTaskGroup(of: Set<String>?.self) { group in
+            group.addTask {
+                for await alarms in AlarmManager.shared.alarmUpdates {
+                    return Set(alarms.map { $0.id.uuidString })
+                }
+                return []
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first ?? []
+        }
     }
 
     private func alertSound(for item: AlarmItem) -> AlertConfiguration.AlertSound {
@@ -259,6 +289,39 @@ final class AlarmService {
         let tone = allTones.first { $0.id == item.toneID }
             ?? allTones.first { $0.id == defaultAlarmToneID }
         return tone.map { .named($0.fileName) } ?? .default
+    }
+
+    /// Most recent expected fire time in the past, or nil if none yet.
+    /// Mirrors `nextFireDate` but walks backwards — used for cold-launch
+    /// missed-alarm detection.
+    func previousFireDate(for item: AlarmItem) -> Date? {
+        let cal = Calendar.current
+        let now = Date()
+        let activeOffsets = item.days.enumerated().filter(\.element).map(\.offset)
+
+        if activeOffsets.isEmpty {
+            var comps = cal.dateComponents([.year, .month, .day], from: now)
+            comps.hour = item.hour
+            comps.minute = item.minute
+            comps.second = 0
+            guard let d = cal.date(from: comps) else { return nil }
+            return d <= now ? d : cal.date(byAdding: .day, value: -1, to: d)
+        }
+
+        let todayWeekday = cal.component(.weekday, from: now)
+        let todayIdx = (todayWeekday + 5) % 7
+        for offset in 0..<8 {
+            let dayIdx = (todayIdx - offset + 70) % 7
+            guard activeOffsets.contains(dayIdx) else { continue }
+            var comps = cal.dateComponents([.year, .month, .day], from: now)
+            comps.hour = item.hour
+            comps.minute = item.minute
+            comps.second = 0
+            guard let base = cal.date(from: comps) else { continue }
+            let candidate = base.addingTimeInterval(TimeInterval(-offset * 86400))
+            if candidate <= now { return candidate }
+        }
+        return nil
     }
 
     func nextFireDate(for item: AlarmItem) -> Date {
