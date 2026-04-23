@@ -14,6 +14,12 @@ private let log = Logger(subsystem: "com.alarm", category: "app")
 private final class AlarmKitLocalState {
     /// Is any alarm currently `.alerting`?
     var isAlerting: Bool = false
+    /// UUID string of the currently alerting alarm (if any).
+    var alertingAlarmID: String? = nil
+    /// When the current `.alerting` state began. Used to detect AlarmKit's
+    /// "silent-but-still-alerting" limbo (hardware volume press on rescue
+    /// doesn't always fire a state transition).
+    var alertingSince: Date? = nil
     /// Fire date of the currently queued rescue alarm, or nil if none.
     var rescueFireDate: Date? = nil
     var rescuePending: Bool {
@@ -35,6 +41,7 @@ struct AlarmApp: App {
                 .task { primeAudioSession() }
                 .task { await alarmEventsLoop() }
                 .task { await rescueLoop() }
+                .task { await volumeLoop() }
         }
     }
 
@@ -67,10 +74,17 @@ struct AlarmApp: App {
                 log.info("🔕 AlarmKit no longer alerting")
             }
             kitState.isAlerting = false
+            kitState.alertingAlarmID = nil
+            kitState.alertingSince = nil
             return
         }
 
+        // Only stamp alertingSince on the false→true transition.
+        if !kitState.isAlerting || kitState.alertingAlarmID != id {
+            kitState.alertingSince = Date()
+        }
         kitState.isAlerting = true
+        kitState.alertingAlarmID = id
 
         // Rescue fired → clear rescue fireDate; pendingMission should already be set.
         if id == AlarmService.rescueSlotID.uuidString {
@@ -91,6 +105,45 @@ struct AlarmApp: App {
         // Any prior rescue is stale — this primary just woke the user.
         AlarmService.shared.cancelRescue()
         kitState.rescueFireDate = nil
+    }
+
+    // MARK: - Volume loop
+    //
+    // Independent, fast (1s) ticker. Keeps re-asserting system volume to
+    // `item.volume` while a mission is pending. In background iOS usually
+    // blocks programmatic volume changes via MPVolumeView — but the moment
+    // the app transitions to foreground active (unlock, AlarmKit UI, intent
+    // return) this loop has the best chance of sticking a push. On foreground
+    // entry we also do a short ramp for the visible "climbing" effect.
+
+    private func volumeLoop() async {
+        var wasForeground = false
+        while !Task.isCancelled {
+            if let item = await store.pendingMission {
+                let isForeground = await MainActor.run {
+                    UIApplication.shared.applicationState == .active
+                }
+                if isForeground && !wasForeground {
+                    // Ramp from 0 → target over ~1.5s for a visible climb.
+                    await rampVolume(to: item.volume, steps: 8, totalSeconds: 1.5)
+                } else {
+                    await MainActor.run { AudioService.shared.setVolume(item.volume) }
+                }
+                wasForeground = isForeground
+            } else {
+                wasForeground = false
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+    }
+
+    private func rampVolume(to target: Double, steps: Int, totalSeconds: Double) async {
+        let stepDelay = UInt64((totalSeconds / Double(steps)) * 1_000_000_000)
+        for i in 1...steps {
+            let v = target * Double(i) / Double(steps)
+            await MainActor.run { AudioService.shared.setVolume(v) }
+            try? await Task.sleep(nanoseconds: stepDelay)
+        }
     }
 
     // MARK: - Rescue loop
@@ -117,14 +170,37 @@ struct AlarmApp: App {
         }
     }
 
+    /// If a rescue alarm stays in `.alerting` for longer than this, AlarmKit
+    /// is likely stuck in silent-alerting limbo (hardware volume-press
+    /// side-effect). Force-cancel so the next tick can queue a fresh rescue.
+    private static let rescueStuckTimeout: TimeInterval = 20
+
     @MainActor
     private func rescueTick() async {
         store.reloadPersistedTransients()
         guard let item = store.pendingMission else { return }
 
-        let isAlerting = kitState.isAlerting
+        var isAlerting = kitState.isAlerting
         let rescuePending = kitState.rescuePending
         let isForeground = UIApplication.shared.applicationState == .active
+
+        // Stuck-rescue detection: AlarmKit sometimes reports a rescue as
+        // .alerting indefinitely after the user silenced it with the hardware
+        // volume button — no audio, no state transition. Force-cancel so the
+        // next tick re-queues.
+        if isAlerting,
+           kitState.alertingAlarmID == AlarmService.rescueSlotID.uuidString,
+           !store.isOnMissionScreen,
+           let since = kitState.alertingSince,
+           Date().timeIntervalSince(since) > Self.rescueStuckTimeout {
+            log.info("⚠ rescue stuck in .alerting >\(Int(Self.rescueStuckTimeout))s — force cancel")
+            try? AlarmService.shared.cancel(alarmKitID: AlarmService.rescueSlotID.uuidString)
+            kitState.isAlerting = false
+            kitState.alertingAlarmID = nil
+            kitState.alertingSince = nil
+            kitState.rescueFireDate = nil
+            isAlerting = false
+        }
 
         log.info("⏱ rescueTick item=\(item.id) alerting=\(isAlerting) rescuePending=\(rescuePending) fg=\(isForeground) audio=\(AudioService.shared.isPlaying) missionScreen=\(self.store.isOnMissionScreen)")
 
