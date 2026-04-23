@@ -6,5 +6,9 @@
 	<string>App functionality, Schedule alarms</string>
 	<key>NSCameraUsageDescription</key>
 	<string>The photo mission uses your camera to confirm you're awake.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 </dict>
 </plist>

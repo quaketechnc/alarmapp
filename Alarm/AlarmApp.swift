@@ -77,19 +77,15 @@ struct AlarmApp: App {
             }
             log.info("✓ resolved item id=\(item.id) time=\(item.timeString)")
 
-            // Silence AlarmKit's system-level alert so it doesn't play on top
-            // of the in-app AudioService. For recurring alarms this leaves the
-            // schedule intact for the next occurrence; for one-time alarms it
-            // simply completes. The in-app ringing experience is driven by
-            // `RingingView` + `AudioService` from here on.
-            AlarmService.shared.stop(alarmKitID: id)
-
-            // Start in-app audio immediately — don't wait for RingingView.onAppear.
-            // The view's onAppear may lag by hundreds of ms (SwiftUI transition),
-            // during which AlarmKit's own audio session has already released and
-            // the user perceives silence + vibration. Playing here narrows the gap
-            // and gives AudioService's session-activation retry the earliest shot.
+            // AlarmKit is configured with a silent tone (NoSound.mp3) so it
+            // does not hold audio-session priority. Safe to take the session
+            // for our in-app ringtone immediately.
             AudioService.shared.play(toneID: item.toneID, volume: item.volume, loops: -1)
+
+            // Silence AlarmKit's lock-screen alert UI for recurring alarms so
+            // the user isn't looking at both our RingingView and the system
+            // alert side by side. Also cancels the alarm for one-time fires.
+            AlarmService.shared.stop(alarmKitID: id)
 
             store.firingAlarmID = id
             store.pendingMission = item

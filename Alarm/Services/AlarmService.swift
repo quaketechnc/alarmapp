@@ -35,6 +35,7 @@ let allTones: [AlarmTone] = {
     let items = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
     let files = items
         .filter { supported.contains(($0 as NSString).pathExtension.lowercased()) }
+        .filter { ($0 as NSString).deletingPathExtension != "NoSound" }  // internal silent tone handed to AlarmKit
         .sorted(by: toneOrder)
     return files.map(makeTone(fileName:))
 }()
@@ -174,7 +175,8 @@ final class AlarmService {
         let backupID = AlarmService.backupSlotID
         log.info("+ scheduleBackup itemID=\(item.id) delay=\(Int(delay))s backupID=\(backupID)")
         let fireDate = Date().addingTimeInterval(delay)
-        let intent = SolveMissionIntent()
+        // Intent resolves the item via pendingMission fallback when the backup fires.
+        let intent = SolveMissionIntent(alarmIDString: item.alarmKitID ?? item.id.uuidString)
         let config = AlarmManager.AlarmConfiguration<AlarmMeta>.alarm(
             schedule: .fixed(fireDate),
             attributes: AlarmAttributes<AlarmMeta>(
@@ -208,7 +210,7 @@ final class AlarmService {
                 repeats: .weekly(activeDays)
             ))
 
-        let intent = SolveMissionIntent()
+        let intent = SolveMissionIntent(alarmIDString: alarmID.uuidString)
         let config = AlarmManager.AlarmConfiguration<AlarmMeta>.alarm(
             schedule: schedule,
             attributes: attrs,
@@ -251,6 +253,13 @@ final class AlarmService {
     }
 
     private func alertSound(for item: AlarmItem) -> AlertConfiguration.AlertSound {
+        // Hand AlarmKit a silent tone so it does NOT hold the audio session
+        // with high priority while alerting. Our in-app AudioService plays the
+        // real ringtone. If NoSound.mp3 is missing, fall back to the item's
+        // chosen tone (which loses audio-session control but keeps sound).
+        if Bundle.main.url(forResource: "NoSound", withExtension: "mp3") != nil {
+            return .named("NoSound.mp3")
+        }
         let tone = allTones.first { $0.id == item.toneID }
             ?? allTones.first { $0.id == defaultAlarmToneID }
         return tone.map { .named($0.fileName) } ?? .default

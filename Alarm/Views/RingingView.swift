@@ -141,11 +141,17 @@ struct RingingView: View {
         }
         .onAppear {
             pulseScale = 1.3
-            log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions)")
-            // watchAlarms usually already started playback. Only kick off here
-            // if it didn't (e.g. cold launch where onAppear wins the race).
-            if !AudioService.shared.isPlaying {
-                AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+            log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions) audio.isPlaying=\(AudioService.shared.isPlaying)")
+            // watchAlarms starts audio synchronously when alerting is detected.
+            // Only kick off here as a safety net for cold-launch via intent,
+            // where watchAlarms hasn't observed an alerting event.
+            // Small delay lets watchAlarms' async play() settle isPlaying=true first.
+            Task {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if !AudioService.shared.isPlaying {
+                    log.info("🔔 RingingView cold-launch fallback play")
+                    AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
+                }
             }
         }
         .onDisappear {
