@@ -253,13 +253,9 @@ final class AlarmService {
     }
 
     private func alertSound(for item: AlarmItem) -> AlertConfiguration.AlertSound {
-        // Hand AlarmKit a silent tone so it does NOT hold the audio session
-        // with high priority while alerting. Our in-app AudioService plays the
-        // real ringtone. If NoSound.mp3 is missing, fall back to the item's
-        // chosen tone (which loses audio-session control but keeps sound).
-        if Bundle.main.url(forResource: "NoSound", withExtension: "mp3") != nil {
-            return .named("NoSound.mp3")
-        }
+        // AlarmKit plays the real tone — alarm-priority audio bypasses the
+        // user's media-volume setting, so a user with vol=0 still wakes up.
+        // This is the only reliable path when the app is backgrounded/killed.
         let tone = allTones.first { $0.id == item.toneID }
             ?? allTones.first { $0.id == defaultAlarmToneID }
         return tone.map { .named($0.fileName) } ?? .default

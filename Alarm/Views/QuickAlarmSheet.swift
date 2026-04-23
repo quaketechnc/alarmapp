@@ -175,7 +175,7 @@ struct QuickAlarmSheet: View {
             minute: cal.component(.minute, from: fireDate),
             days: Array(repeating: false, count: 7),
             isEnabled: true,
-            missionIDs: ["off"],
+            selectedMissions: [AlarmMission(from: .off)],
             toneID: defaultToneID,
             volume: volume,
             vibration: vibration,

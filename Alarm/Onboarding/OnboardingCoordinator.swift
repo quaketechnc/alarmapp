@@ -9,21 +9,6 @@ enum OnboardingStep: Int, CaseIterable {
 
 enum PermState { case prompt, granted, denied }
 
-struct AlarmMission: Identifiable {
-    let id: String
-    let name: String
-    let desc: String
-    let level: String
-}
-
-let allMissions: [AlarmMission] = [
-    AlarmMission(id: "math",   name: "Math",             desc: "Solve problems to dismiss.",       level: "Hard"),
-    AlarmMission(id: "type",   name: "Typing",           desc: "Type a passage word-for-word.",    level: "Medium"),
-    AlarmMission(id: "tiles",  name: "Find color tiles", desc: "Tap tiles in the right order.",    level: "Medium"),
-    AlarmMission(id: "shake",  name: "Shake",            desc: "Shake your phone. A lot.",         level: "Easy"),
-    AlarmMission(id: "off",    name: "Off",              desc: "Just dismiss. For the brave.",     level: "None"),
-]
-
 // MARK: - Coordinator
 
 @Observable
@@ -40,7 +25,7 @@ final class OnboardingCoordinator {
     var volume: Double = 70 {
         didSet { AudioService.shared.setVolume(volume) }
     }
-    var selectedMissionID: String = "math"
+    var selectedMission: AlarmMission = AlarmMission(from: .math)
 
     func next() {
         let nextRaw = step.rawValue + 1

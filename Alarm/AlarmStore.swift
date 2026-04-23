@@ -3,40 +3,6 @@ import SwiftUI
 
 private let log = Logger(subsystem: "com.alarm", category: "store")
 
-struct AlarmItem: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var hour: Int
-    var minute: Int
-    var days: [Bool]  // 7 elements: Mon–Sun
-    var isEnabled: Bool = true
-    var missionIDs: [String] = ["math"]
-    var toneID: String = defaultAlarmToneID
-    var volume: Double = 70
-    var vibration: Bool = true
-    var alarmKitID: String?
-    var isQuick: Bool = false  // ephemeral: created via QuickAlarmSheet, removed after firing
-
-    var timeString: String { String(format: "%d:%02d", hour, minute) }
-
-    var daysLabel: String {
-        let abbr = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-        let active = days.enumerated().filter(\.element).map { abbr[$0.offset] }
-        if active.count == 7 { return "Every day" }
-        if active == ["Mon","Tue","Wed","Thu","Fri"] { return "Weekdays" }
-        if active == ["Sat","Sun"] { return "Weekends" }
-        return active.isEmpty ? "Once" : active.joined(separator: ", ")
-    }
-
-    var primaryMissionName: String {
-        guard let first = missionIDs.first else { return "None" }
-        return allMissions.first { $0.id == first }?.name ?? "None"
-    }
-
-    var toneName: String {
-        allTones.first { $0.id == toneID }?.name ?? toneID.capitalized
-    }
-}
-
 @Observable
 final class AlarmStore {
     var items: [AlarmItem] = []
@@ -80,6 +46,24 @@ final class AlarmStore {
         }
     }
 
+    /// Re-read pendingMission/backupAlarmKitID from UserDefaults. Call on
+    /// scene activation: `SolveMissionIntent` writes these from outside the
+    /// @Observable store, so without a reload the main UI stays stale — e.g.
+    /// RingingView doesn't appear after an intent-driven return to foreground.
+    @MainActor
+    func reloadPersistedTransients() {
+        let freshMission = load(AlarmItem.self, key: Self.udMission)
+        if freshMission != pendingMission {
+            log.info("↻ reload: pendingMission \(self.pendingMission?.id.uuidString ?? "nil") → \(freshMission?.id.uuidString ?? "nil")")
+            pendingMission = freshMission
+        }
+        let freshBackup = UserDefaults.standard.string(forKey: Self.udBackup)
+        if freshBackup != backupAlarmKitID {
+            log.info("↻ reload: backupAlarmKitID \(self.backupAlarmKitID ?? "nil") → \(freshBackup ?? "nil")")
+            backupAlarmKitID = freshBackup
+        }
+    }
+
     // MARK: CRUD
 
     func toggle(_ id: UUID) {
@@ -91,7 +75,7 @@ final class AlarmStore {
 
     func add(_ item: AlarmItem) {
         items.append(item)
-        log.info("+ add id=\(item.id) time=\(item.timeString) tone='\(item.toneID)' missions=\(item.missionIDs)")
+        log.info("+ add id=\(item.id) time=\(item.timeString) tone='\(item.toneID)' missions=\(item.selectedMissions.map({$0.id}))")
         save()
     }
 

@@ -14,8 +14,21 @@ struct AlarmApp: App {
             ContentView()
                 .environment(store)
                 .task { SoundInstaller.installIfNeeded() }
+                .task { primeAudioSession() }
                 .task { await watchAlarms() }
                 .task { await watchdog() }
+        }
+    }
+
+    /// Pre-configure the audio session at launch so it's ready the moment an
+    /// alarm fires. `.mixWithOthers` means we don't fight anyone for priority.
+    private func primeAudioSession() {
+        let s = AVAudioSession.sharedInstance()
+        do {
+            try s.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            log.info("🎚 primeAudioSession OK")
+        } catch {
+            log.error("🎚 primeAudioSession failed: \(error)")
         }
     }
 
@@ -58,11 +71,28 @@ struct AlarmApp: App {
         log.info("watchAlarms: stream started")
         for await firingID in AlarmService.shared.alertingAlarmIDStream {
             guard let id = firingID else {
-                // Do NOT clear store.firingAlarmID here: we ourselves call
-                // AlarmManager.stop() below, which causes the stream to yield
-                // nil while the user is still mid-mission. Only
-                // completeMission() is allowed to clear firingAlarmID.
-                log.debug("watchAlarms: stream yielded nil (expected after stop)")
+                // Stream yielded nil. Two possibilities:
+                //  a) completeMission() just ran → pendingMission is cleared
+                //     → nothing to do (expected).
+                //  b) AlarmKit was silenced externally (hardware volume-down
+                //     on lock screen, "Stop" swipe on the system banner, etc.)
+                //     while the user still owes the mission. In that case
+                //     pendingMission is still set — AlarmKit has released its
+                //     audio session, so WE pick up the ringing via
+                //     AudioService (UIBackgroundModes:audio keeps it playing
+                //     even if the app is still backgrounded) and refresh the
+                //     backup alarm so app-kill still recovers.
+                if let item = store.pendingMission {
+                    log.info("🔕 external silence detected — taking over audio (item=\(item.id))")
+                    await AudioService.shared.playAsync(
+                        toneID: item.toneID,
+                        volume: item.volume,
+                        loops: -1
+                    )
+                    await refreshBackupIfRinging()
+                } else {
+                    log.debug("watchAlarms: stream yielded nil (expected after completeMission)")
+                }
                 continue
             }
             log.info("🔔 alarm alerting: alarmKitID=\(id)")
@@ -77,16 +107,13 @@ struct AlarmApp: App {
             }
             log.info("✓ resolved item id=\(item.id) time=\(item.timeString)")
 
-            // AlarmKit is configured with a silent tone (NoSound.mp3) so it
-            // does not hold audio-session priority. Safe to take the session
-            // for our in-app ringtone immediately.
-            AudioService.shared.play(toneID: item.toneID, volume: item.volume, loops: -1)
-
-            // Silence AlarmKit's lock-screen alert UI for recurring alarms so
-            // the user isn't looking at both our RingingView and the system
-            // alert side by side. Also cancels the alarm for one-time fires.
-            AlarmService.shared.stop(alarmKitID: id)
-
+            // Do NOT stop AlarmKit and do NOT start our AudioService here.
+            // AlarmKit plays the real tone at alarm-priority (bypasses media
+            // volume = 0), which is the only way to guarantee the user wakes.
+            // Our AudioService only kicks in after the user has interacted —
+            // see SolveMissionIntent (slide-stop) and MissionExecutionView,
+            // both of which run with the app in foreground where
+            // MPVolumeView / AVAudioSession work reliably.
             store.firingAlarmID = id
             store.pendingMission = item
 

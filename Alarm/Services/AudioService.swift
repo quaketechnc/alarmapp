@@ -1,6 +1,8 @@
 import AVFoundation
+import MediaPlayer
 import os
 import Observation
+import UIKit
 
 private let log = Logger(subsystem: "com.alarm", category: "audio")
 
@@ -35,11 +37,12 @@ final class AudioService {
 
         stop()
         await activateSessionAsync()
+        await MainActor.run { Self.setSystemVolume(Float(volume / 100)) }
 
         do {
             let p = try AVAudioPlayer(contentsOf: url)
             p.prepareToPlay()
-            p.volume = Float(volume / 100)
+            p.volume = 1.0  // system volume is the gate; player stays at 1.0
             p.numberOfLoops = loops
             let ok = p.play()
             log.info("▶ AVAudioPlayer.play() returned \(ok) duration=\(p.duration) isPlaying=\(p.isPlaying)")
@@ -53,7 +56,61 @@ final class AudioService {
     }
 
     func setVolume(_ volume: Double) {
-        player?.volume = Float(volume / 100)
+        Self.setSystemVolume(Float(volume / 100))
+    }
+
+    /// Keep a single MPVolumeView alive in the key window so its slider is
+    /// attached (the classic iOS "set system volume" trick requires the
+    /// slider to actually be in the view hierarchy; a throw-away view
+    /// created on-demand often never lays out in time).
+    @MainActor private static let volumeHost: MPVolumeView = {
+        let v = MPVolumeView(frame: CGRect(x: -4000, y: -4000, width: 1, height: 1))
+        v.showsRouteButton = false
+        v.isUserInteractionEnabled = false
+        v.alpha = 0.0001
+        return v
+    }()
+
+    @MainActor
+    private static func attachHostIfNeeded() {
+        if volumeHost.superview != nil { return }
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        window?.addSubview(volumeHost)
+    }
+
+    /// Recursively find the MPVolumeSlider (subclass of UISlider).
+    @MainActor
+    private static func findVolumeSlider(in view: UIView) -> UISlider? {
+        for sub in view.subviews {
+            if let s = sub as? UISlider { return s }
+            if let found = findVolumeSlider(in: sub) { return found }
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func setSystemVolume(_ value: Float) {
+        let clamped = max(0, min(1, value))
+        attachHostIfNeeded()
+
+        // MPVolumeSlider may not exist until after a runloop tick.
+        func apply(attempts: Int) {
+            if let slider = findVolumeSlider(in: volumeHost) {
+                slider.setValue(clamped, animated: false)
+                // sendActions(.valueChanged) actually pushes the change through
+                // to the system audio service.
+                slider.sendActions(for: .valueChanged)
+                log.info("🔊 system volume → \(clamped) (slider=\(type(of: slider)))")
+            } else if attempts > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { apply(attempts: attempts - 1) }
+            } else {
+                log.warning("🔊 MPVolumeView slider not found")
+            }
+        }
+        DispatchQueue.main.async { apply(attempts: 10) }
     }
 
     func stop() {
@@ -69,8 +126,18 @@ final class AudioService {
     private func activateSessionAsync() async {
         let session = AVAudioSession.sharedInstance()
         log.info("🎚 session BEFORE category=\(session.category.rawValue) isOtherAudioPlaying=\(session.isOtherAudioPlaying) outputVolume=\(session.outputVolume)")
-        try? session.setCategory(.playback, mode: .default, options: [])
-        let backoffs: [TimeInterval] = [0.3, 0.5, 0.7, 1.0, 1.0, 1.5, 2.0]
+
+        // .mixWithOthers: don't try to interrupt any other session — we'd
+        // rather mix over whatever else is playing than fail with 560557684
+        // (cannotInterruptOthers). Alarms must not be silent.
+        do {
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            log.info("🎚 setCategory(.playback, .mixWithOthers) OK")
+        } catch let err as NSError {
+            log.error("🎚 setCategory failed code=\(err.code) desc=\(err.localizedDescription)")
+        }
+
+        let backoffs: [TimeInterval] = [0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0]
         for (i, wait) in backoffs.enumerated() {
             do {
                 try session.setActive(true, options: [.notifyOthersOnDeactivation])

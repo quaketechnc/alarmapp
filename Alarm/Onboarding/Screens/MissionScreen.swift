@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MissionScreen: View {
-    @Binding var selectedMissionID: String
+    @Binding var selectedMission: AlarmMission
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -30,7 +30,7 @@ struct MissionScreen: View {
     }
 
     private func missionRow(mission: AlarmMission, isLast: Bool) -> some View {
-        let active = mission.id == selectedMissionID
+        let active = mission.id == selectedMission.id
 
         return HStack(spacing: 14) {
             // Icon container
@@ -38,7 +38,7 @@ struct MissionScreen: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(active ? Color.white.opacity(0.12) : OB.ink.opacity(0.05))
                     .frame(width: 42, height: 42)
-                MissionIconView(missionID: mission.id, active: active)
+                MissionIconView(missionID: mission.id.rawValue, active: active)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -82,7 +82,7 @@ struct MissionScreen: View {
         .padding(14)
         .background(active ? OB.ink : OB.card)
         .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMissionID = mission.id } }
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selectedMission = mission } }
         .overlay(alignment: .bottom) {
             if !isLast {
                 Rectangle()
@@ -117,5 +117,5 @@ struct MissionIconView: View {
 }
 
 #Preview {
-    MissionScreen(selectedMissionID: .constant("math"))
+    MissionScreen(selectedMission: .constant(AlarmMission(from: .off)))
 }

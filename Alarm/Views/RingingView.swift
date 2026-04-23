@@ -7,15 +7,23 @@ private let log = Logger(subsystem: "com.alarm", category: "ringing")
 private let nightBg = Color(red: 0.102, green: 0.086, blue: 0.071)
 
 struct RingingView: View {
-    let missions: [String]
-    let toneID: String
+    let missions: [AlarmMission]
+    let toneID: String?
     var volume: Double = 70
     let onDismiss: () -> Void
 
     @State private var now = Date()
     @State private var showMission = false
     @State private var pulseScale: CGFloat = 1.0
+    @State private var selectedMission:AlarmMission
 
+    init(missions: [AlarmMission], toneID: String?, volume: Double = 70, onDismiss: @escaping () -> Void,) {
+        self.missions = missions
+        self.toneID = toneID
+        self.volume = volume
+        self.onDismiss = onDismiss
+        self.selectedMission = missions.randomElement() ?? AlarmMission(from: .off)
+    }
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var timeString: String {
@@ -32,83 +40,20 @@ struct RingingView: View {
 
     var body: some View {
         ZStack {
-            nightBg.ignoresSafeArea()
-            RadialGradient(
-                colors: [OB.accent.opacity(0.35), .clear],
-                center: .init(x: 0.3, y: 0.2),
-                startRadius: 0, endRadius: 300
-            )
-            .ignoresSafeArea()
-            RadialGradient(
-                colors: [Color(red: 1, green: 0.55, blue: 0.26).opacity(0.25), .clear],
-                center: .init(x: 0.75, y: 0.85),
-                startRadius: 0, endRadius: 250
-            )
-            .ignoresSafeArea()
+            background
 
             VStack(spacing: 0) {
-                Text(dateLabel)
-                    .font(.system(size: 13, weight: .semibold))
-                    .kerning(0.5)
-                    .foregroundStyle(.white.opacity(0.6))
-                    .textCase(.uppercase)
-                    .padding(.top, 68)
-
-                Text(timeString)
-                    .font(.system(size: 92, weight: .ultraLight))
-                    .kerning(-5)
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.top, 10)
+                timeHeader
 
                 Spacer()
-
-                ZStack {
-                    Circle()
-                        .fill(OB.accent.opacity(0.3))
-                        .frame(width: 120, height: 120)
-                        .scaleEffect(pulseScale)
-                        .animation(
-                            .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
-                            value: pulseScale
-                        )
-                    Circle()
-                        .fill(OB.accent.opacity(0.5))
-                        .frame(width: 96, height: 96)
-                        .scaleEffect(max(1, pulseScale * 0.9))
-                        .animation(
-                            .easeInOut(duration: 1.6).delay(0.3).repeatForever(autoreverses: true),
-                            value: pulseScale
-                        )
-                    Circle()
-                        .fill(OB.accent)
-                        .frame(width: 80, height: 80)
-                        .overlay {
-                            Image(systemName: "bell.fill")
-                                .font(.system(size: 32, weight: .medium))
-                                .foregroundStyle(.white)
-                        }
-                        .shadow(color: OB.accent.opacity(0.5), radius: 20, y: 8)
-                }
-
-                if !missions.isEmpty {
-                    let name = allMissions.first { $0.id == missions[0] }?.name ?? "Mission"
-                    HStack(spacing: 8) {
-                        Image(systemName: "bolt.fill")
-                        Text("Solve \(name) to dismiss")
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.white.opacity(0.12), in: Capsule())
-                    .padding(.top, 28)
-                }
+                animatedRingBell
+                currentMissionConteiner()
+                    .padding(.top, 24)
 
                 Spacer()
 
                 Button {
-                    if missions.isEmpty {
+                    if selectedMission.id == .off{
                         onDismiss()
                     } else {
                         guard !showMission else { return }
@@ -138,18 +83,27 @@ struct RingingView: View {
                 .padding(.horizontal, 22)
                 .padding(.bottom, 44)
             }
+            .padding(.top, 25)
         }
         .onAppear {
             pulseScale = 1.3
+            guard let toneID = toneID else {
+                log.info("🔔 RingingView appear without tone")
+                return 
+            }
             log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% missions=\(missions) audio.isPlaying=\(AudioService.shared.isPlaying)")
-            // watchAlarms starts audio synchronously when alerting is detected.
-            // Only kick off here as a safety net for cold-launch via intent,
-            // where watchAlarms hasn't observed an alerting event.
-            // Small delay lets watchAlarms' async play() settle isPlaying=true first.
+            // App is foreground with a key window — MPVolumeView trick works.
+            // Push system volume up to the alarm's configured level so the
+            // user hears AlarmKit (which is still playing) and/or our audio
+            // at the intended loudness, even if they'd silenced the device.
+            AudioService.shared.setVolume(volume)
+            // If AudioService isn't already playing (cold-launch without
+            // intent having run), start it as a fallback. AlarmKit is still
+            // playing, so audio never fully stops — this is belt-and-braces.
             Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 if !AudioService.shared.isPlaying {
-                    log.info("🔔 RingingView cold-launch fallback play")
+                    log.info("🔔 RingingView fallback play")
                     AudioService.shared.play(toneID: toneID, volume: volume, loops: -1)
                 }
             }
@@ -162,6 +116,7 @@ struct RingingView: View {
         .fullScreenCover(isPresented: $showMission) {
             MissionExecutionView(
                 missions: missions,
+                startingMission: selectedMission,
                 onComplete: {
                     showMission = false
                     onDismiss()
@@ -169,8 +124,93 @@ struct RingingView: View {
             )
         }
     }
+    
+    
+    private var timeHeader: some View  {
+        VStack(spacing: 0) {
+            Text(dateLabel)
+                .font(.system(size: 13, weight: .semibold))
+                .kerning(0.5)
+                .foregroundStyle(.white.opacity(0.6))
+                .textCase(.uppercase)
+
+            Text(timeString)
+                .font(.system(size: 92, weight: .ultraLight))
+                .kerning(-5)
+                .monospacedDigit()
+                .foregroundStyle(.white)
+        }
+    }
+    private var animatedRingBell: some View {
+        ZStack {
+            Circle()
+                .fill(OB.accent.opacity(0.3))
+                .frame(width: 120, height: 120)
+                .scaleEffect(pulseScale)
+                .animation(
+                    .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                    value: pulseScale
+                )
+            Circle()
+                .fill(OB.accent.opacity(0.5))
+                .frame(width: 96, height: 96)
+                .scaleEffect(max(1, pulseScale * 0.9))
+                .animation(
+                    .easeInOut(duration: 1.6).delay(0.3).repeatForever(autoreverses: true),
+                    value: pulseScale
+                )
+            Circle()
+                .fill(OB.accent)
+                .frame(width: 80, height: 80)
+                .overlay {
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 32, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .shadow(color: OB.accent.opacity(0.5), radius: 20, y: 8)
+        }
+    }
+    
+    @ViewBuilder
+    private func currentMissionConteiner() -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.fill")
+            Text(selectedMission.desc)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.white.opacity(0.75))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.12), in: Capsule())
+    }
+    
+    private var background: some View {
+        ZStack {
+            nightBg.ignoresSafeArea()
+            RadialGradient(
+                colors: [OB.accent.opacity(0.35), .clear],
+                center: .init(x: 0.3, y: 0.2),
+                startRadius: 0, endRadius: 300
+            )
+            .ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(red: 1, green: 0.55, blue: 0.26).opacity(0.25), .clear],
+                center: .init(x: 0.75, y: 0.85),
+                startRadius: 0, endRadius: 250
+            )
+            .ignoresSafeArea()
+        }
+    }
 }
 
 #Preview {
-    RingingView(missions: ["math", "typing"], toneID: defaultAlarmToneID, onDismiss: {})
+    RingingView(missions: [
+        AlarmMission(from: .math),
+        AlarmMission(from: .off),
+        AlarmMission(from: .photo),
+        AlarmMission(from: .shake),
+        AlarmMission(from: .tiles),
+        AlarmMission(from: .type)
+    ],
+                toneID: nil) { print("done") }
 }

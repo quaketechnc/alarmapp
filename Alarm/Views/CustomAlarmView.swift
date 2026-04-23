@@ -1,15 +1,18 @@
 import SwiftUI
 
+private enum TimeField: Hashable { case hour, minute }
+
 struct CustomAlarmView: View {
     let existingAlarm: AlarmItem?
     let onSave: (AlarmItem) -> Void
     let onCancel: () -> Void
     var onDelete: (() -> Void)? = nil
 
-    @State private var alarmDate: Date
+    @State private var hour: Int
+    @State private var minute: Int
     @State private var daily: Bool
     @State private var days: [Bool]
-    @State private var missionIDs: [String]
+    @State private var selectedMissions: [AlarmMission]
     @State private var toneID: String
     @State private var volume: Double
     @State private var vibration: Bool
@@ -17,6 +20,10 @@ struct CustomAlarmView: View {
     @State private var showMissionPicker = false
     @State private var showRingtonePicker = false
     @State private var showDeleteConfirm = false
+
+    @FocusState private var focusedField: TimeField?
+    @State private var hourInput: String = ""
+    @State private var minuteInput: String = ""
 
     private let dayLabels = ["M","T","W","T","F","S","S"]
 
@@ -28,34 +35,33 @@ struct CustomAlarmView: View {
         self.onSave = onSave
         self.onCancel = onCancel
         self.onDelete = onDelete
+        
+        
         if let a = existingAlarm {
-            _alarmDate  = State(initialValue: Calendar.current.date(bySettingHour: a.hour, minute: a.minute, second: 0, of: Date()) ?? Date())
+            _hour       = State(initialValue: a.hour)
+            _minute     = State(initialValue: a.minute)
             _daily      = State(initialValue: a.days.allSatisfy { $0 })
             _days       = State(initialValue: a.days)
-            _missionIDs = State(initialValue: a.missionIDs)
+            _selectedMissions   = State(initialValue: a.selectedMissions)
             _toneID     = State(initialValue: a.toneID)
             _volume     = State(initialValue: a.volume)
             _vibration  = State(initialValue: a.vibration)
         } else {
-            _alarmDate  = State(initialValue: Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: Date()) ?? Date())
+            _hour       = State(initialValue: 7)
+            _minute     = State(initialValue: 0)
             _daily      = State(initialValue: true)
             _days       = State(initialValue: [true, true, true, true, true, false, false])
-            _missionIDs = State(initialValue: ["math"])
+            _selectedMissions   = State(initialValue: [AlarmMission(from: .off)])
             _toneID     = State(initialValue: UserDefaults.standard.string(forKey: .keyDefaultToneID) ?? defaultAlarmToneID)
             _volume     = State(initialValue: 70)
             _vibration  = State(initialValue: true)
         }
     }
 
-    private var hour: Int { Calendar.current.component(.hour, from: alarmDate) }
-    private var minute: Int { Calendar.current.component(.minute, from: alarmDate) }
-
-    private var timeString: String { String(format: "%d:%02d", hour, minute) }
-
     private var ringsInLabel: String {
         let now = Date()
-        var comps = Calendar.current.dateComponents([.hour, .minute], from: alarmDate)
-        comps.second = 0
+        var comps = DateComponents()
+        comps.hour = hour; comps.minute = minute; comps.second = 0
         guard let target = Calendar.current.nextDate(
             after: now, matching: comps,
             matchingPolicy: .nextTime
@@ -63,6 +69,7 @@ struct CustomAlarmView: View {
         let diff = Int(target.timeIntervalSince(now))
         let h = diff / 3600
         let m = (diff % 3600) / 60
+        if h == 0 { return "rings in \(m)m" }
         return "rings in \(h)h \(m)m"
     }
 
@@ -113,9 +120,9 @@ struct CustomAlarmView: View {
         }
         .sheet(isPresented: $showMissionPicker) {
             MissionPickerView(
-                currentIDs: missionIDs,
-                onAdd: { id in
-                    if !missionIDs.contains(id) { missionIDs.append(id) }
+                missions: selectedMissions,
+                onAdd: { mission in
+                    if !selectedMissions.contains(mission) { selectedMissions.append(mission) }
                     showMissionPicker = false
                 },
                 onBack: { showMissionPicker = false }
@@ -150,12 +157,11 @@ struct CustomAlarmView: View {
                 .foregroundStyle(OB.ink)
             Spacer()
             Button("Save") {
-                let cal = Calendar.current
                 var item = AlarmItem(
-                    hour: cal.component(.hour, from: alarmDate),
-                    minute: cal.component(.minute, from: alarmDate),
+                    hour: hour,
+                    minute: minute,
                     days: days,
-                    missionIDs: missionIDs,
+                    selectedMissions: selectedMissions,
                     toneID: toneID,
                     volume: volume,
                     vibration: vibration
@@ -171,30 +177,162 @@ struct CustomAlarmView: View {
             .foregroundStyle(OB.accent)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 58)
-        .padding(.bottom, 10)
     }
 
-    // MARK: - Time card
+    // MARK: - Time card (onboarding-style picker)
 
     private var timeCard: some View {
-        VStack(spacing: 14) {
-            Text(timeString)
-                .font(.system(size: 64, weight: .bold))
-                .kerning(-3)
-                .monospacedDigit()
-                .foregroundStyle(OB.ink)
+        VStack(spacing: 12) {
+            timePicker
             Text(ringsInLabel)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OB.ink3)
-            DatePicker("", selection: $alarmDate, displayedComponents: .hourAndMinute)
-                .datePickerStyle(.wheel)
-                .labelsHidden()
-                .frame(height: 100)
-                .clipped()
         }
         .padding(20)
         .background(OB.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture { focusedField = nil }
+        .background(hiddenFields)
+    }
+
+    private var timePicker: some View {
+        HStack(spacing: 10) {
+            timeColumn(value: hour, display: displayHour, field: .hour, upper: 24)
+            Text(":")
+                .font(.system(size: 44, weight: .bold))
+                .foregroundStyle(OB.ink3)
+                .padding(.bottom, 6)
+            timeColumn(value: minute, display: displayMinute, field: .minute, upper: 60)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .contentShape(Rectangle())
+    }
+
+    private func timeColumn(value: Int, display: String, field: TimeField, upper: Int) -> some View {
+        let isEditing = focusedField == field
+        return VStack(spacing: 6) {
+            Button {
+                commitEditing()
+                if field == .hour { hour = (hour + 1) % upper }
+                else { minute = (minute + 1) % upper }
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(OB.ink3)
+                    .padding(8)
+            }
+
+            ZStack(alignment: .bottom) {
+                Text(display)
+                    .font(.system(size: 48, weight: .bold))
+                    .kerning(-3)
+                    .foregroundStyle(isEditing ? OB.accent : OB.ink)
+                    .monospacedDigit()
+                    .frame(width: 100, alignment: .center)
+                    .animation(.easeInOut(duration: 0.12), value: isEditing)
+
+                if isEditing {
+                    Rectangle()
+                        .fill(OB.accent)
+                        .frame(width: 60, height: 3)
+                        .cornerRadius(2)
+                        .offset(y: 6)
+                        .transition(.opacity.animation(.easeIn(duration: 0.1)))
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if field == .hour {
+                    hourInput = ""
+                    focusedField = .hour
+                } else {
+                    minuteInput = ""
+                    focusedField = .minute
+                }
+            }
+
+            Button {
+                commitEditing()
+                if field == .hour { hour = ((hour - 1) + upper) % upper }
+                else { minute = ((minute - 1) + upper) % upper }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(OB.ink3)
+                    .padding(8)
+            }
+        }
+    }
+
+    private var displayHour: String {
+        if focusedField == .hour {
+            return hourInput.isEmpty ? "--" : hourInput.count == 1 ? "0\(hourInput)" : hourInput
+        }
+        return String(format: "%02d", hour)
+    }
+
+    private var displayMinute: String {
+        if focusedField == .minute {
+            return minuteInput.isEmpty ? "--" : minuteInput.count == 1 ? "0\(minuteInput)" : minuteInput
+        }
+        return String(format: "%02d", minute)
+    }
+
+    private func commitEditing() {
+        focusedField = nil
+        hourInput = ""
+        minuteInput = ""
+    }
+
+    private func handleHourInput(_ raw: String) {
+        let digits = raw.filter(\.isNumber)
+        let capped = String(digits.suffix(2))
+        if hourInput != capped { hourInput = capped }
+        if let val = Int(capped), val <= 23 {
+            hour = val
+        } else if capped.count == 2 {
+            hourInput = String(capped.prefix(1))
+        }
+        if capped.count == 2, let val = Int(capped), val <= 23 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                minuteInput = ""
+                focusedField = .minute
+            }
+        }
+    }
+
+    private func handleMinuteInput(_ raw: String) {
+        let digits = raw.filter(\.isNumber)
+        let capped = String(digits.suffix(2))
+        if minuteInput != capped { minuteInput = capped }
+        if let val = Int(capped), val <= 59 {
+            minute = val
+        } else if capped.count == 2 {
+            minuteInput = String(capped.prefix(1))
+        }
+        if capped.count == 2, let val = Int(capped), val <= 59 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                focusedField = nil
+            }
+        }
+    }
+
+    private var hiddenFields: some View {
+        ZStack {
+            TextField("", text: $hourInput)
+                .keyboardType(.numberPad)
+                .focused($focusedField, equals: .hour)
+                .opacity(0.001)
+                .frame(width: 1, height: 1)
+                .onChange(of: hourInput) { _, newValue in handleHourInput(newValue) }
+
+            TextField("", text: $minuteInput)
+                .keyboardType(.numberPad)
+                .focused($focusedField, equals: .minute)
+                .opacity(0.001)
+                .frame(width: 1, height: 1)
+                .onChange(of: minuteInput) { _, newValue in handleMinuteInput(newValue) }
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: - Repeat section
@@ -272,54 +410,59 @@ struct CustomAlarmView: View {
                     .kerning(0.6)
                     .foregroundStyle(OB.ink3)
                 Spacer()
-                Text("\(missionIDs.count)/5")
+                Text("\(selectedMissions.count)/5")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OB.ink3)
             }
             .padding(.horizontal, 4)
 
             HStack(spacing: 8) {
-                ForEach(missionIDs, id: \.self) { id in
-                    let _ = allMissions.first { $0.id == id }
-                    ZStack(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(OB.card)
-                            .frame(width: 58, height: 58)
-                        MissionIconView(missionID: id, active: false)
-                            .frame(width: 58, height: 58)
-                        Button {
-                            withAnimation(.spring(response: 0.25)) {
-                                missionIDs.removeAll { $0 == id }
+                // Always render 5 slots. Filled slots show the selected mission
+                // with a remove (×) badge; empty slots show a dashed "+" button
+                // that opens the picker.
+                ForEach(0..<5, id: \.self) { slot in
+                    if slot < selectedMissions.count {
+                        let id = selectedMissions[slot].id
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(OB.card)
+                                .frame(width: 58, height: 58)
+                            MissionIconView(missionID: id.rawValue, active: false)
+                                .frame(width: 58, height: 58)
+                            Button {
+                                withAnimation(.spring(response: 0.25)) {
+                                    selectedMissions.removeAll { $0.id == id }
+                                }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 20, height: 20)
+                                    .background(OB.accent, in: Circle())
                             }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(OB.accent, in: Circle())
+                            .offset(x: -6, y: -6)
                         }
-                        .offset(x: -6, y: -6)
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        Button {
+                            showMissionPicker = true
+                        } label: {
+                            Text("+")
+                                .font(.system(size: 22, weight: .light))
+                                .foregroundStyle(OB.ink3)
+                                .frame(width: 58, height: 58)
+                                .background(
+                                    Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(OB.ink.opacity(0.15), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                                )
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                        .frame(maxWidth: .infinity)
                     }
-                }
-
-                ForEach(0..<max(0, min(3, 5 - missionIDs.count)), id: \.self) { i in
-                    Button {
-                        if i == 0 { showMissionPicker = true }
-                    } label: {
-                        Text("+")
-                            .font(.system(size: 22, weight: .light))
-                            .foregroundStyle(OB.ink3)
-                            .frame(width: 58, height: 58)
-                            .background(
-                                Color.clear,
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(OB.ink.opacity(0.15), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                            )
-                    }
-                    .buttonStyle(ScaleButtonStyle())
                 }
             }
         }

@@ -38,7 +38,7 @@ struct OnboardingView: View {
                 .transition(slideTransition)
 
             case .mission:
-                MissionScreen(selectedMissionID: $coord.selectedMissionID)
+                MissionScreen(selectedMission: $coord.selectedMission)
                     .transition(slideTransition)
 
             case .permAlarm:
@@ -147,13 +147,12 @@ struct OnboardingView: View {
     private func navigateBack() { goingBack = true; coord.back() }
 
     private func buildAndComplete() {
-        let missions = coord.selectedMissionID == "off" ? [] : [coord.selectedMissionID]
         let item = AlarmItem(
             hour: coord.alarmHour,
             minute: coord.alarmMinute,
             days: coord.selectedDays,
             isEnabled: true,
-            missionIDs: missions,
+            selectedMissions: [coord.selectedMission],
             toneID: coord.selectedToneID,
             volume: coord.volume,
             vibration: true

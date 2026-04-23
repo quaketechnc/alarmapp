@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct MissionPickerView: View {
-    let currentIDs: [String]
-    let onAdd: (String) -> Void
+    let missions: [AlarmMission]
+    let onAdd: (AlarmMission) -> Void
     let onBack: () -> Void
 
-    @State private var selected: String? = nil
+    @State private var selected: AlarmMission? = nil
 
     var body: some View {
         ZStack {
@@ -15,8 +15,8 @@ struct MissionPickerView: View {
                 ScrollView {
                     VStack(spacing: 8) {
                         ForEach(allMissions) { mission in
-                            let inUse = currentIDs.contains(mission.id)
-                            let isSelected = selected == mission.id
+                            let inUse = missions.contains(where: {$0.id == mission.id })
+                            let isSelected = selected == mission
                             missionRow(mission: mission, selected: isSelected, inUse: inUse)
                         }
                     }
@@ -59,7 +59,7 @@ struct MissionPickerView: View {
         Button {
             guard !inUse else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
-                self.selected = mission.id
+                self.selected = mission
             }
         } label: {
             HStack(spacing: 14) {
@@ -67,7 +67,7 @@ struct MissionPickerView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(selected ? OB.card.opacity(0.12) : OB.accent2)
                         .frame(width: 44, height: 44)
-                    MissionIconView(missionID: mission.id, active: selected)
+                    MissionIconView(missionID: mission.id.rawValue, active: selected)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -113,5 +113,5 @@ struct MissionPickerView: View {
 }
 
 #Preview {
-    MissionPickerView(currentIDs: ["math"], onAdd: { _ in }, onBack: {})
+    MissionPickerView(missions: [AlarmMission(from: .math)], onAdd: { _ in }, onBack: {})
 }

@@ -19,7 +19,6 @@ struct RingtonePickerView: View {
             OB.bg.ignoresSafeArea()
             VStack(spacing: 0) {
                 navBar
-                
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(Array(allTones.enumerated()), id: \.element.id) { idx, tone in

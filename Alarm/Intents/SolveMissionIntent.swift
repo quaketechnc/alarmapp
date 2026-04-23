@@ -28,16 +28,16 @@ struct SolveMissionIntent: LiveActivityIntent {
     nonisolated func perform() async throws -> some IntentResult {
         let pid = ProcessInfo.processInfo.processIdentifier
         let appState = await MainActor.run { UIApplication.shared.applicationState.rawValue }
-        log.info("▶ [intent] perform START pid=\(pid) appState=\(appState) alarmID='\(alarmIDString)'")
+        await log.info("▶ [intent] perform START pid=\(pid) appState=\(appState) alarmID='\(alarmIDString)'")
 
         guard let item = Self.resolveItem(alarmIDString: alarmIDString) else {
-            log.warning("▶ [intent] could not resolve item; items data empty? pendingMission? — opening app only")
+            await log.warning("▶ [intent] could not resolve item; items data empty? pendingMission? — opening app only")
             return .result()
         }
-        log.info("▶ [intent] resolved item id=\(item.id) tone='\(item.toneID)' vol=\(Int(item.volume)) missions=\(item.missionIDs)")
+        await log.info("▶ [intent] resolved item id=\(item.id) tone='\(item.toneID)' vol=\(Int(item.volume)) missions=\(item.selectedMissions.map({$0.id}))")
 
         Self.persistPending(item)
-        log.info("▶ [intent] pendingMission persisted")
+        await log.info("▶ [intent] pendingMission persisted")
 
         await MainActor.run {
             log.info("▶ [intent] calling AudioService.play (on MainActor)")
@@ -47,12 +47,12 @@ struct SolveMissionIntent: LiveActivityIntent {
 
         do {
             let id = try await AlarmService.shared.scheduleBackup(for: item, delay: 15)
-            log.info("▶ [intent] backup scheduled id=\(id)")
+            await log.info("▶ [intent] backup scheduled id=\(id)")
         } catch {
-            log.error("▶ [intent] backup schedule failed: \(error)")
+            await log.error("▶ [intent] backup schedule failed: \(error)")
         }
 
-        log.info("▶ [intent] perform END")
+        await log.info("▶ [intent] perform END")
         return .result()
     }
 

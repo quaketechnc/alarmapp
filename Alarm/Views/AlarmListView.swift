@@ -5,6 +5,7 @@ private let log = Logger(subsystem: "com.alarm", category: "list")
 
 struct AlarmListView: View {
     @Environment(AlarmStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showAddMenu = false
     @State private var showQuick = false
     @State private var showCustom = false
@@ -90,6 +91,18 @@ struct AlarmListView: View {
                 showRinging = true
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            // Volume-button / intent / silent-mode interactions can land the
+            // user back in the app (foreground) while a mission is still
+            // pending. Intent writes UserDefaults directly, bypassing the
+            // @Observable store — so pull fresh state and re-present ringing.
+            guard phase == .active else { return }
+            store.reloadPersistedTransients()
+            if store.pendingMission != nil, !showRinging {
+                log.info("→ showRinging on scene .active (pendingMission present)")
+                showRinging = true
+            }
+        }
         .sheet(isPresented: $showQuick) {
             QuickAlarmSheet { showQuick = false }
                 .presentationDetents([.height(540)])
@@ -107,17 +120,30 @@ struct AlarmListView: View {
             )
         }
         .fullScreenCover(isPresented: $showRinging, onDismiss: {
-            store.firingAlarmID = nil
+            // If RingingView was dismissed without a successful mission
+            // (e.g. AlarmKit volume-button interaction, system gesture)
+            // pendingMission is still set — re-present on next runloop tick.
+            if store.pendingMission != nil {
+                log.info("→ RingingView dismissed with pendingMission still set — re-presenting")
+                DispatchQueue.main.async { showRinging = true }
+            } else {
+                store.firingAlarmID = nil
+            }
         }) {
             let firingItem = store.items.first { $0.alarmKitID == store.firingAlarmID }
                 ?? store.pendingMission
             RingingView(
-                missions: firingItem?.missionIDs ?? ["math"],
+                missions: firingItem?.selectedMissions ?? [AlarmMission(from: .off)],
                 toneID: firingItem?.toneID ?? defaultAlarmToneID,
                 volume: firingItem?.volume ?? 70,
                 onDismiss: {
-                    showRinging = false
-                    Task { await store.completeMission() }
+                    // completeMission clears pendingMission BEFORE we flip
+                    // showRinging — otherwise the onDismiss above would see
+                    // pendingMission still set and re-present.
+                    Task {
+                        await store.completeMission()
+                        showRinging = false
+                    }
                 }
             )
         }
@@ -301,7 +327,7 @@ struct AlarmCard: View {
                 .padding(.top, 5)
 
             HStack(spacing: 6) {
-                if !alarm.missionIDs.isEmpty {
+                if !alarm.selectedMissions.isEmpty {
                     alarmChip(
                         icon: "bolt.fill",
                         label: alarm.primaryMissionName,

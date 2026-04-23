@@ -20,7 +20,8 @@
       "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build)",
       "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build)",
       "Bash(grep -cE \"\\\\.\\(mp3|m4a|caf|wav|aiff|aif\\)$\" echo \"---\" ls /Users/alexey_bursmitrovicloud.com/Library/Developer/Xcode/DerivedData/Alarm-ftcyaklqtfkweveizkuwvorvilzv/Build/Products/Debug-iphonesimulator/Alarm.app/)",
-      "Bash(grep -E \"\\\\.\\(mp3|m4a|caf|wav|aiff|aif\\)$\")"
+      "Bash(grep -E \"\\\\.\\(mp3|m4a|caf|wav|aiff|aif\\)$\")",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme Alarm -destination 'generic/platform=iOS' -configuration Debug build)"
     ]
   }
 }
