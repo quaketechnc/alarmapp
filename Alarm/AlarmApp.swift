@@ -72,6 +72,10 @@ struct AlarmApp: App {
         guard let id = firingID else {
             if kitState.isAlerting {
                 log.info("🔕 AlarmKit no longer alerting")
+                AnalyticsService.track(.alarmSilenced, props: [
+                    "alarm_id": kitState.alertingAlarmID ?? "nil",
+                    "duration_s": kitState.alertingSince.map { Int(Date().timeIntervalSince($0)) } ?? -1,
+                ])
             }
             kitState.isAlerting = false
             kitState.alertingAlarmID = nil
@@ -82,6 +86,10 @@ struct AlarmApp: App {
         // Only stamp alertingSince on the false→true transition.
         if !kitState.isAlerting || kitState.alertingAlarmID != id {
             kitState.alertingSince = Date()
+            AnalyticsService.track(.alarmAlerting, props: [
+                "alarm_id": id,
+                "is_rescue": id == AlarmService.rescueSlotID.uuidString,
+            ])
         }
         kitState.isAlerting = true
         kitState.alertingAlarmID = id
@@ -89,6 +97,7 @@ struct AlarmApp: App {
         // Rescue fired → clear rescue fireDate; pendingMission should already be set.
         if id == AlarmService.rescueSlotID.uuidString {
             log.info("🔔 rescue alarm fired")
+            AnalyticsService.track(.rescueFired)
             kitState.rescueFireDate = nil
             return
         }
@@ -100,6 +109,11 @@ struct AlarmApp: App {
             return
         }
         log.info("✓ adopted pendingMission id=\(item.id) time=\(item.timeString)")
+        AnalyticsService.track(.missionAdopted, props: [
+            "item_id": item.id.uuidString,
+            "tone": item.toneID,
+            "volume": Int(item.volume),
+        ])
         store.firingAlarmID = id
         store.pendingMission = item
         // Any prior rescue is stale — this primary just woke the user.
@@ -160,6 +174,9 @@ struct AlarmApp: App {
         if await store.pendingMission == nil {
             if let missed = await store.detectMissedAlarm() {
                 log.info("🔁 rescueLoop: adopting missed alarm id=\(missed.id)")
+                AnalyticsService.track(.missedAlarmDetected, props: [
+                    "item_id": missed.id.uuidString,
+                ])
                 await MainActor.run { store.pendingMission = missed }
             }
         }
@@ -194,6 +211,9 @@ struct AlarmApp: App {
            let since = kitState.alertingSince,
            Date().timeIntervalSince(since) > Self.rescueStuckTimeout {
             log.info("⚠ rescue stuck in .alerting >\(Int(Self.rescueStuckTimeout))s — force cancel")
+            AnalyticsService.track(.rescueStuckCancelled, props: [
+                "stuck_s": Int(Date().timeIntervalSince(since)),
+            ])
             try? AlarmService.shared.cancel(alarmKitID: AlarmService.rescueSlotID.uuidString)
             kitState.isAlerting = false
             kitState.alertingAlarmID = nil
@@ -221,6 +241,11 @@ struct AlarmApp: App {
                 _ = try await AlarmService.shared.scheduleRescue(for: item)
                 kitState.rescueFireDate = Date().addingTimeInterval(AlarmService.rescueDelaySeconds)
                 log.info("✓ rescueTick: rescue queued, fires at \(self.kitState.rescueFireDate!)")
+                AnalyticsService.track(.rescueScheduled, props: [
+                    "item_id": item.id.uuidString,
+                    "delay_s": Int(AlarmService.rescueDelaySeconds),
+                    "foreground": isForeground,
+                ])
             } catch {
                 log.error("✗ rescueTick: scheduleRescue failed \(error)")
             }
