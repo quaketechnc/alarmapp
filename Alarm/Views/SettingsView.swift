@@ -85,7 +85,6 @@ struct SettingsView: View {
             Color.clear.frame(width: 60, height: 20)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 58)
         .padding(.bottom, 10)
     }
 
@@ -247,12 +246,12 @@ struct SettingsView: View {
     private var legalSection: some View {
         sectionCard(header: "LEGAL") {
             legalRow(title: "Terms of Use", isLast: false) {
-                if let url = URL(string: "https://example.com/terms") {
+                if let url = URL(string: "https://wakepal.xyz/terms.html") {
                     UIApplication.shared.open(url)
                 }
             }
             legalRow(title: "Privacy Policy", isLast: true) {
-                if let url = URL(string: "https://example.com/privacy") {
+                if let url = URL(string: "https://wakepal.xyz/privacy.html") {
                     UIApplication.shared.open(url)
                 }
             }
