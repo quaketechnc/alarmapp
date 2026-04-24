@@ -3,9 +3,14 @@
 //  Alarm
 //
 //  Pre-alarm verification: user picks one object from their current selection,
-//  snaps a photo, and sees whether the backend would unlock the alarm.
-//  Uses the exact same `NetworkingService.recognizeMissionPhoto` endpoint that
-//  runs in production, so the result is representative.
+//  snaps a photo, and sees whether the backend would unlock the alarm. Uses
+//  the exact same `NetworkingService.recognizeMissionPhoto` endpoint that runs
+//  in production, so the result is representative.
+//
+//  Layout mirrors `CameraView` so the preview card keeps a stable size across
+//  states (shooting → analyzing → result). The frame never reflows when the
+//  captured photo replaces the live feed — only the content inside the card
+//  swaps and the action row beneath it changes.
 //
 
 import SwiftUI
@@ -17,13 +22,36 @@ struct PhotoTaskTestSheet: View {
 
     private enum Phase {
         case choosing
-        case shooting(AlarmTask)
-        case analyzing(AlarmTask, UIImage)
-        case result(AlarmTask, UIImage, MissionRecognitionResult)
-        case failure(AlarmTask, UIImage, String)
+        case testing(AlarmTask)
+    }
+
+    /// Inner state of the camera stage — mirrors `CameraView.ScanState`.
+    private enum TestState {
+        case shooting
+        case analyzing(UIImage)
+        case success(UIImage, MissionRecognitionResult)
+        case failure(UIImage, String)
+
+        var capturedImage: UIImage? {
+            switch self {
+            case .shooting:               return nil
+            case .analyzing(let img),
+                 .success(let img, _),
+                 .failure(let img, _):    return img
+            }
+        }
+        var isAnalyzing: Bool {
+            if case .analyzing = self { return true }
+            return false
+        }
+        var isSuccess: Bool {
+            if case .success(_, let r) = self { return r.detected }
+            return false
+        }
     }
 
     @State private var phase: Phase = .choosing
+    @State private var state: TestState = .shooting
     @State private var captureTrigger = 0
     @State private var cameraError: String?
 
@@ -32,22 +60,16 @@ struct PhotoTaskTestSheet: View {
             OB.bg.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
-                Group {
-                    switch phase {
-                    case .choosing:                         chooser
-                    case .shooting(let t):                  shooter(task: t)
-                    case .analyzing(let t, let img):        analyzing(task: t, image: img)
-                    case .result(let t, let img, let r):    resultView(task: t, image: img, result: r)
-                    case .failure(let t, let img, let msg): failureView(task: t, image: img, message: msg)
-                    }
+                switch phase {
+                case .choosing:         chooser
+                case .testing(let t):   testingStage(task: t)
                 }
-                .frame(maxHeight: .infinity)
             }
         }
         .alert("Camera Error", isPresented: .constant(cameraError != nil), actions: {
             Button("OK", role: .cancel) {
                 cameraError = nil
-                phase = .choosing
+                reset()
             }
         }, message: { Text(cameraError ?? "") })
     }
@@ -55,41 +77,45 @@ struct PhotoTaskTestSheet: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            Button(action: backOrClose) {
-                Image(systemName: backIcon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(OB.ink2)
-                    .padding(10)
-                    .background(OB.card, in: Circle())
-            }
-            .buttonStyle(ScaleButtonStyle())
-            Spacer()
-            Text("Test detection")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(OB.ink)
-            Spacer()
-            Color.clear.frame(width: 40, height: 40)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+        Text(headerTitle)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(OB.ink)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .overlay(alignment: .leading, content: { leadingButton })
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 10)
     }
 
-    private var backIcon: String {
+    private var headerTitle: String {
         switch phase {
-        case .choosing: return "xmark"
-        default:        return "chevron.left"
+        case .choosing:  return "Test detection"
+        case .testing:   return "SCAN"
         }
     }
 
-    private func backOrClose() {
+    @ViewBuilder
+    private var leadingButton: some View {
         switch phase {
         case .choosing:
-            onClose()
-        default:
-            phase = .choosing
+            iconButton(system: "xmark", action: onClose)
+        case .testing:
+            iconButton(system: "chevron.left") {
+                reset()
+                phase = .choosing
+            }
         }
+    }
+
+    private func iconButton(system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OB.ink2)
+                .frame(width: 36, height: 36)
+                .background(OB.card, in: Circle())
+        }
+        .buttonStyle(ScaleButtonStyle())
     }
 
     // MARK: - Chooser
@@ -106,7 +132,7 @@ struct PhotoTaskTestSheet: View {
                 LazyVGrid(columns: cols, spacing: 10) {
                     ForEach(candidates) { task in
                         Button {
-                            phase = .shooting(task)
+                            startTesting(task)
                         } label: {
                             VStack(spacing: 8) {
                                 Text(task.emoji).font(.system(size: 36))
@@ -129,84 +155,146 @@ struct PhotoTaskTestSheet: View {
         }
     }
 
-    // MARK: - Shooter
+    // MARK: - Testing stage
 
-    private func shooter(task: AlarmTask) -> some View {
-        VStack(spacing: 16) {
+    private func testingStage(task: AlarmTask) -> some View {
+        VStack(spacing: 0) {
             instructionBanner(task: task)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 22)
+                .padding(.top, 12)
 
-            previewFrame {
-                PhotoCaptureView(
-                    captureTrigger: $captureTrigger,
-                    onCapture: { img in handleCapture(task: task, image: img) },
-                    onError: { cameraError = $0 }
-                )
-            }
-            .padding(.horizontal, 20)
+            previewCard(task: task)
+                .padding(.horizontal, 22)
+                .padding(.top, 20)
 
-            Spacer()
+            statusRow
+                .padding(.top, 14)
+                .frame(minHeight: 44)
 
-            Button {
-                captureTrigger += 1
-            } label: {
-                Circle()
-                    .fill(OB.accent)
-                    .frame(width: 72, height: 72)
-                    .overlay(Circle().stroke(.white, lineWidth: 4).padding(6))
-                    .shadow(color: OB.accent.opacity(0.35), radius: 10, y: 4)
-            }
-            .buttonStyle(ScaleButtonStyle())
-            .padding(.bottom, 30)
+            Spacer(minLength: 12)
+            actionRow(task: task)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 24)
         }
     }
 
-    // MARK: - Analyzing
+    private func instructionBanner(task: AlarmTask) -> some View {
+        HStack(spacing: 10) {
+            Text(task.emoji).font(.system(size: 28))
+            Text(task.instruction)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(OB.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
 
-    private func analyzing(task: AlarmTask, image: UIImage) -> some View {
-        VStack(spacing: 16) {
-            instructionBanner(task: task).padding(.horizontal, 20)
-            previewFrame { Image(uiImage: image).resizable().scaledToFill() }
-                .padding(.horizontal, 20)
+    // MARK: - Preview card (fixed-size container)
 
-            HStack(spacing: 10) {
-                ProgressView().tint(OB.accent)
-                Text("Analyzing…")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OB.ink2)
+    /// Stable-sized frame: both live camera and captured photo fill the same
+    /// 3:4 card so the layout never reflows between states.
+    private func previewCard(task: AlarmTask) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OB.card)
+
+            cameraContent(task: task)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+            if state.isAnalyzing {
+                ScanningOverlay()
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .transition(.opacity)
             }
-            .padding(.top, 12)
-            Spacer()
+
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(borderColor, lineWidth: state.isSuccess ? 3 : 1)
+                .animation(.easeInOut(duration: 0.25), value: state.isSuccess)
+
+            if state.isSuccess {
+                VStack {
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 56))
+                        .foregroundStyle(OB.ok)
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                        .padding(.bottom, 22)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+        }
+        .aspectRatio(3.0/4.0, contentMode: .fit)
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: state.isSuccess)
+    }
+
+    @ViewBuilder
+    private func cameraContent(task: AlarmTask) -> some View {
+        if let image = state.capturedImage {
+            // `.scaledToFill()` on a `Image(uiImage:)` reports the bitmap's
+            // natural pixel size as its ideal size, which causes the parent
+            // `ZStack` to grow past the `.aspectRatio` constraint and stretch
+            // the whole screen. Pinning the frame to the proposed size (via
+            // `maxWidth/maxHeight: .infinity`) and clipping forces the image
+            // to respect the preview card's bounds — live feed and captured
+            // photo then occupy the exact same rect.
+            GeometryReader { geo in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+            }
+        } else {
+            PhotoCaptureView(
+                captureTrigger: $captureTrigger,
+                onCapture: { img in handleCapture(task: task, image: img) },
+                onError: { cameraError = $0 }
+            )
         }
     }
 
-    // MARK: - Result
+    private var borderColor: Color {
+        switch state {
+        case .success(_, let r): return r.detected ? OB.ok : OB.accent.opacity(0.8)
+        case .failure:           return OB.accent.opacity(0.8)
+        default:                 return OB.line
+        }
+    }
 
-    private func resultView(task: AlarmTask, image: UIImage, result: MissionRecognitionResult) -> some View {
-        VStack(spacing: 16) {
-            instructionBanner(task: task).padding(.horizontal, 20)
-            previewFrame { Image(uiImage: image).resizable().scaledToFill() }
-                .padding(.horizontal, 20)
+    // MARK: - Status row
 
-            VStack(spacing: 6) {
-                Image(systemName: result.detected ? "checkmark.seal.fill" : "xmark.seal.fill")
-                    .font(.system(size: 36))
-                    .foregroundStyle(result.detected ? OB.ok : OB.accent)
-                Text(result.detected ? "Detected!" : "Not detected")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(result.detected ? OB.ok : OB.accent)
-                Text(detailLine(result: result))
-                    .font(.system(size: 13))
+    @ViewBuilder
+    private var statusRow: some View {
+        switch state {
+        case .shooting:
+            Text("Hold steady and tap to capture")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.ink3)
+                .multilineTextAlignment(.center)
+
+        case .analyzing:
+            EmptyView()
+
+        case .success(_, let r):
+            VStack(spacing: 4) {
+                Text(r.detected ? "Detected!" : "Not detected")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(r.detected ? OB.ok : OB.accent)
+                Text(detailLine(result: r))
+                    .font(.system(size: 12))
                     .foregroundStyle(OB.ink3)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
             }
-            .padding(.top, 14)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 22)
 
-            Spacer()
-            retakeButton(task: task)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
+        case .failure(_, let message):
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.accent)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 22)
         }
     }
 
@@ -216,90 +304,165 @@ struct PhotoTaskTestSheet: View {
         return "Saw: \(label)   •   confidence \(pct)%"
     }
 
-    // MARK: - Failure
+    // MARK: - Action row
 
-    private func failureView(task: AlarmTask, image: UIImage, message: String) -> some View {
-        VStack(spacing: 16) {
-            instructionBanner(task: task).padding(.horizontal, 20)
-            previewFrame { Image(uiImage: image).resizable().scaledToFill() }
-                .padding(.horizontal, 20)
-
-            VStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(OB.accent)
-                Text("Test failed")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(OB.ink)
-                Text(message)
-                    .font(.system(size: 13))
-                    .foregroundStyle(OB.ink3)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
+    @ViewBuilder
+    private func actionRow(task: AlarmTask) -> some View {
+        switch state {
+        case .shooting:
+            captureCircle(enabled: true).frame(maxWidth: .infinity)
+        case .analyzing:
+            // Keep the same capture button in place so the action row's height
+            // doesn't collapse — greyed out and non-interactive during analyze.
+            captureCircle(enabled: false).frame(maxWidth: .infinity)
+        case .success(_, let r):
+            primaryButton(title: "Retake",
+                          color: r.detected ? OB.ok : OB.accent) {
+                reset()
             }
-            .padding(.top, 14)
-
-            Spacer()
-            retakeButton(task: task)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
+        case .failure:
+            primaryButton(title: "Try Again", color: OB.accent) {
+                reset()
+            }
         }
     }
 
-    private func retakeButton(task: AlarmTask) -> some View {
+    private func captureCircle(enabled: Bool) -> some View {
         Button {
-            phase = .shooting(task)
+            captureTrigger += 1
         } label: {
-            Text("Retake")
-                .font(.system(size: 16, weight: .semibold))
+            Circle()
+                .fill(enabled ? OB.accent : OB.ink3.opacity(0.35))
+                .frame(width: 72, height: 72)
+                .overlay(Circle().stroke(.white, lineWidth: 4).padding(6))
+                .shadow(color: enabled ? OB.accent.opacity(0.35) : .clear, radius: 10, y: 4)
+        }
+        .buttonStyle(ScaleButtonStyle())
+        .disabled(!enabled)
+    }
+
+    private func primaryButton(title: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 54)
-                .background(OB.ink, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .frame(height: 56)
+                .background(color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(ScaleButtonStyle())
     }
 
-    // MARK: - Shared UI bits
-
-    private func instructionBanner(task: AlarmTask) -> some View {
-        HStack(spacing: 10) {
-            Text(task.emoji).font(.system(size: 28))
-            Text(task.instruction)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(OB.ink)
-            Spacer()
-        }
-        .padding(14)
-        .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    @ViewBuilder
-    private func previewFrame<V: View>(@ViewBuilder content: () -> V) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous).fill(OB.card)
-            content()
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(OB.line, lineWidth: 1)
-        }
-        .aspectRatio(3.0/4.0, contentMode: .fit)
-    }
-
     // MARK: - Logic
 
+    private func startTesting(_ task: AlarmTask) {
+        state = .shooting
+        captureTrigger = 0
+        phase = .testing(task)
+    }
+
+    private func reset() {
+        captureTrigger = 0
+        state = .shooting
+    }
+
     private func handleCapture(task: AlarmTask, image: UIImage) {
-        phase = .analyzing(task, image)
+        state = .analyzing(image)
         Task {
             let result = await NetworkingService.recognizeMissionPhoto(image: image, task: task)
             await MainActor.run {
-                switch result {
-                case .success(let r):
-                    phase = .result(task, image, r)
-                case .failure(let err):
-                    phase = .failure(task, image, err.localizedDescription)
+                withAnimation {
+                    switch result {
+                    case .success(let r):
+                        state = .success(image, r)
+                    case .failure(let err):
+                        state = .failure(image, err.localizedDescription)
+                    }
                 }
             }
         }
+    }
+}
+
+// MARK: - Scanning overlay
+//
+// Sits on top of the captured photo while the server verifies it. Visual
+// language mirrors a sci-fi "scanning" HUD:
+//  • translucent green vertical gradient tinting the photo,
+//  • four green L-shaped corner brackets (classic viewfinder),
+//  • a horizontal line sweeping top → bottom on a 1.6s loop,
+//  • a subtle chip with spinner + "Analyzing…" label docked at the bottom.
+// The whole thing is clipped by the preview card's rounded rect, so it always
+// matches the photo's geometry.
+
+private struct ScanningOverlay: View {
+    @State private var sweep: CGFloat = 0
+
+    private let accent = Color(red: 0.20, green: 0.85, blue: 0.45)
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                // (1) Green gradient wash over the whole photo.
+                LinearGradient(
+                    colors: [
+                        accent.opacity(0.28),
+                        accent.opacity(0.10),
+                        accent.opacity(0.28),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+
+                // (3) Sweeping scan line.
+                scanLine(width: geo.size.width)
+                    .frame(height: 3)
+                    .position(x: geo.size.width / 2,
+                              y: max(1.5, sweep * geo.size.height))
+
+                // (4) Analyzing chip at bottom.
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.8)
+                        Text("Analyzing…")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.55), in: Capsule())
+                    .padding(.bottom, 14)
+                }
+            }
+            .onAppear {
+                sweep = 0
+                withAnimation(
+                    .easeInOut(duration: 1.6).repeatForever(autoreverses: true)
+                ) {
+                    sweep = 1
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func scanLine(width: CGFloat) -> some View {
+        LinearGradient(
+            colors: [
+                accent.opacity(0),
+                accent.opacity(0.9),
+                Color.white.opacity(0.95),
+                accent.opacity(0.9),
+                accent.opacity(0),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .frame(width: width)
+        .shadow(color: accent.opacity(0.9), radius: 6, y: 0)
     }
 }
