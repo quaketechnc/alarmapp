@@ -529,9 +529,14 @@ struct ShakeMissionView: View {
 
 struct PhotoMissionView: View {
     let onSolve: () -> Void
-    
+
+    @Environment(AlarmStore.self) private var store
+
     var body: some View {
-        CameraView(onComplete: onSolve)
+        CameraView(
+            onComplete: onSolve,
+            allowedTaskIDs: store.pendingMission?.photoTaskIDs
+        )
     }
 }
 

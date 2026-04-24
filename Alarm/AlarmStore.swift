@@ -145,6 +145,10 @@ final class AlarmStore {
             // Record completion so cold-launch missed-alarm detection won't
             // re-trigger this alarm.
             lastCompletedFireDate[mission.id.uuidString] = Date()
+            AnalyticsService.track(.missionCompleted, props: [
+                "item_id": mission.id.uuidString,
+                "missions": mission.selectedMissions.map { $0.id.rawValue }.joined(separator: ","),
+            ])
         }
 
         if let mission = pendingMission,

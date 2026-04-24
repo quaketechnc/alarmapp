@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(AlarmStore.self) private var store
-
+    
     var body: some View {
         if hasCompletedOnboarding {
             AlarmListView()

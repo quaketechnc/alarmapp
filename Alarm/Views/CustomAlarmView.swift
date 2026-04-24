@@ -20,6 +20,8 @@ struct CustomAlarmView: View {
     @State private var showMissionPicker = false
     @State private var showRingtonePicker = false
     @State private var showDeleteConfirm = false
+    @State private var showPhotoTaskPicker = false
+    @State private var photoTaskIDs: [String]?
 
     @FocusState private var focusedField: TimeField?
     @State private var hourInput: String = ""
@@ -46,6 +48,7 @@ struct CustomAlarmView: View {
             _toneID     = State(initialValue: a.toneID)
             _volume     = State(initialValue: a.volume)
             _vibration  = State(initialValue: a.vibration)
+            _photoTaskIDs = State(initialValue: a.photoTaskIDs)
         } else {
             _hour       = State(initialValue: 7)
             _minute     = State(initialValue: 0)
@@ -55,6 +58,7 @@ struct CustomAlarmView: View {
             _toneID     = State(initialValue: UserDefaults.standard.string(forKey: .keyDefaultToneID) ?? defaultAlarmToneID)
             _volume     = State(initialValue: 70)
             _vibration  = State(initialValue: true)
+            _photoTaskIDs = State(initialValue: nil)
         }
     }
 
@@ -89,6 +93,12 @@ struct CustomAlarmView: View {
                         missionSection
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
+                        if hasPhotoMission {
+                            photoObjectsSection
+                                .padding(.horizontal, 20)
+                                .padding(.top, 20)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                         soundSection
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
@@ -122,10 +132,34 @@ struct CustomAlarmView: View {
             MissionPickerView(
                 missions: selectedMissions,
                 onAdd: { mission in
-                    if !selectedMissions.contains(mission) { selectedMissions.append(mission) }
+                    let wasPhoto = mission.id == .photo
+                    let alreadySelected = selectedMissions.contains(mission)
+                    if !alreadySelected { selectedMissions.append(mission) }
                     showMissionPicker = false
+
+                    // First time Photo is added → seed default 10 and take
+                    // the user straight to the picker so they can tailor the
+                    // list (or hit Test) before saving.
+                    if wasPhoto, !alreadySelected, photoTaskIDs == nil {
+                        photoTaskIDs = TaskCatalog.defaultIDs
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            showPhotoTaskPicker = true
+                        }
+                    }
                 },
                 onBack: { showMissionPicker = false }
+            )
+            .presentationDetents([.large])
+            .presentationBackground(OB.bg)
+        }
+        .sheet(isPresented: $showPhotoTaskPicker) {
+            PhotoTaskPickerView(
+                initial: photoTaskIDs,
+                onDone: { ids in
+                    photoTaskIDs = ids
+                    showPhotoTaskPicker = false
+                },
+                onCancel: { showPhotoTaskPicker = false }
             )
             .presentationDetents([.large])
             .presentationBackground(OB.bg)
@@ -171,6 +205,7 @@ struct CustomAlarmView: View {
                     item.alarmKitID = existing.alarmKitID
                     item.isEnabled = existing.isEnabled
                 }
+                item.photoTaskIDs = hasPhotoMission ? photoTaskIDs : nil
                 onSave(item)
             }
             .font(.system(size: 16, weight: .bold))
@@ -461,6 +496,59 @@ struct CustomAlarmView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Photo-objects section
+
+    private var hasPhotoMission: Bool {
+        selectedMissions.contains(where: { $0.id == .photo })
+    }
+
+    private var photoObjectsSummary: String {
+        if let ids = photoTaskIDs {
+            if ids.isEmpty { return "None selected" }
+            return "\(ids.count) object\(ids.count == 1 ? "" : "s") selected"
+        }
+        return "All \(TaskCatalog.totalCount) objects"
+    }
+
+    private var photoObjectsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("PHOTO OBJECTS")
+                .font(.system(size: 11, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(OB.ink3)
+                .padding(.horizontal, 4)
+
+            Button { showPhotoTaskPicker = true } label: {
+                HStack {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 15))
+                        .foregroundStyle(OB.accent)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Objects to photograph")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(OB.ink)
+                        Text("Tap to customize & test")
+                            .font(.system(size: 12))
+                            .foregroundStyle(OB.ink3)
+                    }
+                    Spacer()
+                    Text(photoObjectsSummary)
+                        .font(.system(size: 14))
+                        .foregroundStyle(OB.ink3)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OB.ink3.opacity(0.6))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(OB.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+            .buttonStyle(.plain)
         }
     }
 

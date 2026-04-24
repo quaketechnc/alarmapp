@@ -37,14 +37,23 @@ struct AlarmApp: App {
         WindowGroup {
             ContentView()
                 .environment(store)
+                .task { await configureAppTasks() }
                 .task { SoundInstaller.installIfNeeded() }
                 .task { primeAudioSession() }
                 .task { await alarmEventsLoop() }
                 .task { await rescueLoop() }
                 .task { await volumeLoop() }
+                
         }
     }
 
+    private func configureAppTasks() async {
+        await FirebaseService.startup()
+//        await purchaseService.configure(for: FirebaseService.userID)
+//        try? await purchaseService.restore()
+//        withAnimation { isAppLocked.toggle() }
+    }
+    
     /// Pre-configure the audio session at launch so it's ready the moment an
     /// alarm fires. `.mixWithOthers` means we don't fight anyone for priority.
     private func primeAudioSession() {

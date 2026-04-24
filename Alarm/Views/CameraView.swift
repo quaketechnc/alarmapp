@@ -20,10 +20,10 @@ private enum ScanState {
 private extension ScanState {
     var capturedImage: UIImage? {
         switch self {
-        case .shooting:                         return nil
-        case .analyzing(let img):               return img
-        case .success(let img):                 return img
-        case .failure(let img, _):              return img
+        case .shooting:               return nil
+        case .analyzing(let img):     return img
+        case .success(let img):       return img
+        case .failure(let img, _):    return img
         }
     }
 
@@ -38,12 +38,12 @@ private extension ScanState {
     }
 }
 
-// MARK: - Camera View
+// MARK: - Camera View (Photo Mission)
 
 struct CameraView: View {
     var onComplete: (() -> Void)? = nil
-
-    @Environment(\.dismiss) private var dismiss
+    /// Whitelist of task IDs the rotation should draw from. `nil` = full catalog.
+    var allowedTaskIDs: [String]? = nil
 
     @State private var currentTask: AlarmTask = TaskService.shared.current
     @State private var scanState: ScanState = .shooting
@@ -51,20 +51,30 @@ struct CameraView: View {
     @State private var cameraError: String?
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 20) {
-                header
-                taskBanner
-                previewSection
-                statusRow
-                actionButton
-                Spacer()
-            }
-            .padding(24)
+        VStack(spacing: 0) {
+            headerLabel
+            taskBanner
+                .padding(.top, 12)
 
-            if scanState.isAnalyzing {
-                analyzingOverlay
-            }
+            previewCard
+                .padding(.horizontal, 22)
+                .padding(.top, 20)
+
+            statusRow
+                .padding(.top, 14)
+                .frame(minHeight: 22)
+
+            Spacer(minLength: 12)
+            actionButton
+                .padding(.horizontal, 22)
+                .padding(.bottom, 24)
+        }
+        .overlay {
+            if scanState.isAnalyzing { analyzingOverlay }
+        }
+        .onAppear {
+            TaskService.shared.setAllowed(ids: allowedTaskIDs)
+            currentTask = TaskService.shared.current
         }
         .alert("Camera Error", isPresented: .constant(cameraError != nil), actions: {
             Button("OK", role: .cancel) {
@@ -78,65 +88,67 @@ struct CameraView: View {
 
     // MARK: - Header
 
-    private var header: some View {
-        HStack {
-            // Top-left: skip to a different task
+    private var headerLabel: some View {
+        Text("SCAN")
+            .font(.system(size: 13, weight: .bold))
+            .kerning(0.5)
+            .foregroundStyle(OB.ink3)
+            .textCase(.uppercase)
+            .padding(.top, 20)
+    }
+
+    private var taskBanner: some View {
+        HStack(spacing: 10) {
             Button {
                 skipToNextTask()
             } label: {
                 Image(systemName: "shuffle")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.accent)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OB.ink3)
+                    .padding(10)
+                    .background(OB.card, in: Circle())
             }
-            Spacer()
-            Text("Scan")
-                .foregroundStyle(.accent)
-            Spacer()
-            Color.clear.frame(width: 32, height: 32)
+            .buttonStyle(ScaleButtonStyle())
+
+            Text(currentTask.instruction)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(OB.ink)
+                .multilineTextAlignment(.leading)
+                .id(currentTask.id)
+                .transition(.opacity)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, 22)
     }
 
-    // MARK: - Task Banner
+    // MARK: - Preview
 
-    private var taskBanner: some View {
-        Text(currentTask.instruction)
-            .font(.headline)
-            .foregroundStyle(.accent)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
-            .id(currentTask.id)
-            .transition(.opacity)
-    }
-
-    // MARK: - Preview Section
-
-    private var previewSection: some View {
+    private var previewCard: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.black.opacity(0.2))
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OB.card)
 
             cameraContent
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
-            // Border - green on success, red on failure, white otherwise
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(borderColor, lineWidth: scanState.isSuccess ? 4 : 2)
-                .animation(.easeInOut(duration: 0.3), value: scanState.isSuccess)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(borderColor, lineWidth: scanState.isSuccess ? 3 : 1)
+                .animation(.easeInOut(duration: 0.25), value: scanState.isSuccess)
 
-            // Success checkmark overlay
             if scanState.isSuccess {
                 VStack {
                     Spacer()
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 60))
-                        .foregroundStyle(.green)
-                        .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
-                        .padding(.bottom, 24)
+                        .font(.system(size: 56))
+                        .foregroundStyle(OB.ok)
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                        .padding(.bottom, 22)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: scanState.isSuccess)
-        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .aspectRatio(3.0/4.0, contentMode: .fit)
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: scanState.isSuccess)
     }
 
     @ViewBuilder
@@ -145,33 +157,32 @@ struct CameraView: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .clipShape(RoundedRectangle(cornerRadius: 24))
         } else {
             PhotoCaptureView(
                 captureTrigger: $captureTrigger,
                 onCapture: handleCapture,
                 onError: { cameraError = $0 }
             )
-            .clipShape(RoundedRectangle(cornerRadius: 24))
         }
     }
 
     private var borderColor: Color {
         switch scanState {
-        case .success:          return .green
-        case .failure:          return .red.opacity(0.7)
-        default:                return .white.opacity(0.6)
+        case .success: return OB.ok
+        case .failure: return OB.accent.opacity(0.8)
+        default:       return OB.line
         }
     }
 
-    // MARK: - Status Row
+    // MARK: - Status
 
     @ViewBuilder
     private var statusRow: some View {
         switch scanState {
         case .shooting:
             Text("Hold steady and tap to capture")
-                .foregroundStyle(.secondaryText)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.ink3)
                 .multilineTextAlignment(.center)
 
         case .analyzing:
@@ -179,54 +190,52 @@ struct CameraView: View {
 
         case .success:
             Text("Task complete!")
-                .font(.headline)
-                .foregroundStyle(.green)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OB.ok)
 
         case .failure(_, let message):
             Text(message)
-                .foregroundStyle(.red)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.accent)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal)
+                .padding(.horizontal, 22)
         }
     }
 
-    // MARK: - Action Button
+    // MARK: - Actions
 
     @ViewBuilder
     private var actionButton: some View {
         switch scanState {
         case .shooting:
             captureCircle
+                .frame(maxWidth: .infinity)
 
         case .analyzing:
             EmptyView()
 
         case .success:
-            Button {
+            primaryButton(title: "Next Task", color: OB.ok) {
                 if let onComplete { onComplete() } else { skipToNextTask() }
-            } label: {
-                Text("Next Task")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                    .background(Color.green)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
         case .failure:
-            Button {
+            primaryButton(title: "Try Again", color: OB.accent) {
                 resetToShooting()
-            } label: {
-                Text("Try Again")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                    .background(Color.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
             }
         }
+    }
+
+    private func primaryButton(title: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(ScaleButtonStyle())
     }
 
     private var captureCircle: some View {
@@ -234,14 +243,16 @@ struct CameraView: View {
             captureTrigger += 1
         } label: {
             Circle()
-                .fill(Color(.accent))
+                .fill(OB.accent)
                 .frame(width: 72, height: 72)
                 .overlay {
                     Circle()
-                        .stroke(Color.white, lineWidth: 4)
+                        .stroke(.white, lineWidth: 4)
                         .padding(6)
                 }
+                .shadow(color: OB.accent.opacity(0.35), radius: 10, y: 4)
         }
+        .buttonStyle(ScaleButtonStyle())
     }
 
     // MARK: - Analyzing Overlay
@@ -250,12 +261,13 @@ struct CameraView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .tint(.white)
-                .scaleEffect(1.4)
+                .scaleEffect(1.3)
             Text("Analyzing…")
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.black.opacity(0.6))
+        .background(.black.opacity(0.55))
         .ignoresSafeArea()
     }
 
@@ -264,21 +276,24 @@ struct CameraView: View {
     private func handleCapture(_ image: UIImage) {
         scanState = .analyzing(image)
         Task {
-            let result = await RecognitionService.shared.analyze(image: image, task: currentTask)
-            switch result {
-            case .success(let recognition):
-                withAnimation {
-                    if recognition.detected {
-                        scanState = .success(image)
-                    } else {
-                        let label = recognition.topLabel
-                            .components(separatedBy: ",")
-                            .first ?? recognition.topLabel
-                        scanState = .failure(image, "Saw '\(label)'. Try again!")
+            let result = await NetworkingService.recognizeMissionPhoto(image: image, task: currentTask)
+            await MainActor.run {
+                switch result {
+                case .success(let recognition):
+                    withAnimation {
+                        if recognition.detected {
+                            scanState = .success(image)
+                        } else {
+                            let label = recognition.topLabel
+                                .components(separatedBy: ",")
+                                .first ?? recognition.topLabel
+                            let tail = label.isEmpty ? "" : "Saw '\(label)'. "
+                            scanState = .failure(image, "\(tail)Try again!")
+                        }
                     }
+                case .failure(let error):
+                    scanState = .failure(image, error.localizedDescription)
                 }
-            case .failure(let error):
-                scanState = .failure(image, error.localizedDescription)
             }
         }
     }

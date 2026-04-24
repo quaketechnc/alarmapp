@@ -19,6 +19,10 @@ struct AlarmItem: Identifiable, Codable, Equatable {
     var vibration: Bool = true
     var alarmKitID: String?
     var isQuick: Bool = false  // ephemeral: created via QuickAlarmSheet, removed after firing
+    /// Per-alarm photo-mission whitelist. `nil` or empty = all objects in the
+    /// catalog are eligible. Populated via `PhotoTaskPickerView` when the user
+    /// includes the Photo mission.
+    var photoTaskIDs: [String]? = nil
 
     var timeString: String { String(format: "%d:%02d", hour, minute) }
 

@@ -111,6 +111,7 @@ struct MissionIconView: View {
         case "type":   return "keyboard"
         case "tiles":  return "square.grid.2x2"
         case "shake":  return "iphone.gen3.radiowaves.left.and.right"
+        case "photo":  return "camera"
         default:       return "moon.zzz"
         }
     }

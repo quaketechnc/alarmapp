@@ -12,6 +12,7 @@ struct AlarmListView: View {
     @State private var showRinging = false
     @State private var showSettings = false
     @State private var editingAlarm: AlarmItem? = nil
+    
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
