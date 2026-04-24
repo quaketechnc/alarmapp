@@ -133,8 +133,8 @@ private extension NetworkingService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
-        let appCheckToken = try await FirebaseService.refreshAppCheckTokenToken()
-        request.setValue(appCheckToken.token, forHTTPHeaderField: "X-Firebase-AppCheck")
+//        let appCheckToken = try await FirebaseService.refreshAppCheckTokenToken()
+//        request.setValue(appCheckToken.token, forHTTPHeaderField: "X-Firebase-AppCheck")
 
         guard JSONSerialization.isValidJSONObject(payload),
               let body = try? JSONSerialization.data(withJSONObject: payload) else {

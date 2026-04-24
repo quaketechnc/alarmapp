@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>API_KEY</key>
-	<string>AIzaSyBL_qFKdDn5q3GsEGBWYq9oEF32ow85Ado</string>
+	<string>AIzaSyD1ZQXJpbRRzuGnyuGUhKQ5WxMoTvavF14</string>
 	<key>GCM_SENDER_ID</key>
-	<string>996636842249</string>
+	<string>816312930287</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
 	<string>OBTests.Alarm</string>
 	<key>PROJECT_ID</key>
-	<string>alarmapp-ccb19</string>
+	<string>caloriesapp-4697b</string>
 	<key>STORAGE_BUCKET</key>
-	<string>alarmapp-ccb19.firebasestorage.app</string>
+	<string>caloriesapp-4697b.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
@@ -25,6 +25,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:996636842249:ios:0a5f4e7d19e03d5bf29bd8</string>
+	<string>1:816312930287:ios:da1220365ada1d4a50301a</string>
 </dict>
 </plist>
