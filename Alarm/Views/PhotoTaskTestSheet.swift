@@ -77,39 +77,19 @@ struct PhotoTaskTestSheet: View {
     // MARK: - Header
 
     private var header: some View {
-        Text(headerTitle)
+        Text("Test detection")
             .font(.system(size: 17, weight: .semibold))
             .foregroundStyle(OB.ink)
             .frame(maxWidth: .infinity, alignment: .center)
-            .overlay(alignment: .leading, content: { leadingButton })
+            .overlay(alignment: .leading) { closeButton }
             .padding(.horizontal, 20)
             .padding(.top, 20)
             .padding(.bottom, 10)
     }
 
-    private var headerTitle: String {
-        switch phase {
-        case .choosing:  return "Test detection"
-        case .testing:   return "SCAN"
-        }
-    }
-
-    @ViewBuilder
-    private var leadingButton: some View {
-        switch phase {
-        case .choosing:
-            iconButton(system: "xmark", action: onClose)
-        case .testing:
-            iconButton(system: "chevron.left") {
-                reset()
-                phase = .choosing
-            }
-        }
-    }
-
-    private func iconButton(system: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: system)
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(OB.ink2)
                 .frame(width: 36, height: 36)
@@ -189,6 +169,10 @@ struct PhotoTaskTestSheet: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onTapGesture {
+            guard !state.isAnalyzing else { return }
+            phase = .choosing
+        }
     }
 
     // MARK: - Preview card (fixed-size container)
