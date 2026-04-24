@@ -379,7 +379,7 @@ struct PhotoTaskTestSheet: View {
 // The whole thing is clipped by the preview card's rounded rect, so it always
 // matches the photo's geometry.
 
-private struct ScanningOverlay: View {
+struct ScanningOverlay: View {
     @State private var sweep: CGFloat = 0
 
     private let accent = Color(red: 0.20, green: 0.85, blue: 0.45)

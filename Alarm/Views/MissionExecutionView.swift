@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import Combine
 import CoreMotion
@@ -12,19 +13,59 @@ import CoreMotion
         AlarmMission(from: .tiles),
         AlarmMission(from: .type)
     ],
-                         startingMission: AlarmMission(from: .math)) {
+                         startingMission: AlarmMission(from: .photo)) {
         print("done")
     }
+    // PhotoMissionView reads @Environment(AlarmStore.self); without this the
+    // preview crashes with SIGTRAP the moment .photo is the active mission.
+    .environment(AlarmStore())
 }
 
 struct MissionExecutionView: View {
     let missions: [AlarmMission]
     @State var activeMission: AlarmMission
     let onComplete: () -> Void
+
+    @Environment(AlarmStore.self) private var store
+    /// The single object the user currently has to photograph. Selected in
+    /// `.onAppear` from the per-alarm whitelist and re-rolled whenever the
+    /// user taps "Take Other Mission" (so they effectively get both the
+    /// "new mission" and the "new object" behaviour through one button).
+    @State private var photoTask: AlarmTask = TaskCatalog.all.first ?? TaskCatalog.all[0]
     
-    init(missions: [AlarmMission], startingMission: AlarmMission ,onComplete: @escaping () -> Void) {
-        self.missions = missions.filter({$0.id != .off})
-        self.activeMission = startingMission
+    init(missions: [AlarmMission], startingMission: AlarmMission, onComplete: @escaping () -> Void) {
+        // Drop `.off` unconditionally (it's a "no mission" sentinel). In
+        // release, also drop `.photo` whenever the camera permission isn't
+        // granted — `CameraView` would otherwise strand the user on a
+        // permission wall they can't resolve without leaving the alarm.
+        // In DEBUG we keep `.photo` so the simulator/preview path still works.
+        let filtered: [AlarmMission] = missions.filter { m in
+            if m.id == .off { return false }
+            #if !DEBUG
+            if m.id == .photo,
+               AVCaptureDevice.authorizationStatus(for: .video) != .authorized {
+                return false
+            }
+            #endif
+            return true
+        }
+
+        // If the caller-provided `startingMission` was filtered out (e.g. the
+        // only saved mission was `.photo` and camera access is now revoked),
+        // fall back to the first available one, or to `.math` if the list is
+        // empty — `.math` is guaranteed solvable without any permissions, so
+        // the user can always silence the alarm.
+        let resolvedStart: AlarmMission = {
+            if filtered.contains(where: { $0.id == startingMission.id }) {
+                return startingMission
+            }
+            return filtered.first ?? AlarmMission(from: .math)
+        }()
+
+        // Ensure `missions` is never empty so "Take Other Mission" has
+        // something to pick from.
+        self.missions = filtered.isEmpty ? [resolvedStart] : filtered
+        self.activeMission = resolvedStart
         self.onComplete = onComplete
     }
     
@@ -59,6 +100,12 @@ struct MissionExecutionView: View {
                 .padding(.trailing, 20)
         })
         .onAppear{
+            // Scope TaskService to the user's per-alarm whitelist and seed
+            // the first object. `selectRandomMission` re-rolls from the
+            // same pool.
+            TaskService.shared.setAllowed(ids: store.pendingMission?.photoTaskIDs)
+            photoTask = TaskService.shared.current
+
             withAnimation(.easeInOut(duration: 1).delay(3)) {
                 showChangeMissionButton = true
             }
@@ -97,7 +144,7 @@ struct MissionExecutionView: View {
         case .shake:
             ShakeMissionView(onSolve: onComplete)
         case .photo:
-            PhotoMissionView(onSolve: onComplete)
+            PhotoMissionView(task: photoTask, onSolve: onComplete)
         case .off:
             // No mission — complete immediately
             Color.clear.onAppear { onComplete() }
@@ -123,6 +170,10 @@ struct MissionExecutionView: View {
     
     private func selectRandomMission() {
         activeMission = missions.randomElement() ?? AlarmMission(from: .off)
+        // Re-roll the photo object too so "Take Other Mission" offers either
+        // a new mission or (when the pool is photo-only) a new object.
+        TaskService.shared.randomNext()
+        photoTask = TaskService.shared.current
     }
 }
 
@@ -526,17 +577,271 @@ struct ShakeMissionView: View {
 
 
 // MARK: - Photo Mission
+//
+// Visual/behavioural twin of `PhotoTaskTestSheet`: fixed-size 3:4 preview card,
+// the same green scanning overlay while the backend verifies the shot, the
+// same capture button that stays in place (just disabled) during analyze.
+// Differences from the test sheet:
+//  • the object to photograph comes from the parent (no internal rotation —
+//    parent's "Take Other Mission" handles reroll);
+//  • on a detected result we show a primary "Done" button that calls
+//    `onSolve` — the only path that silences the alarm;
+//  • on a non-detected or network-error result we offer "Try Again", which
+//    resets the camera back to shooting.
 
 struct PhotoMissionView: View {
+    let task: AlarmTask
     let onSolve: () -> Void
 
-    @Environment(AlarmStore.self) private var store
+    private enum Stage {
+        case shooting
+        case analyzing(UIImage)
+        case success(UIImage, MissionRecognitionResult)
+        case failure(UIImage, String)
+
+        var capturedImage: UIImage? {
+            switch self {
+            case .shooting:                  return nil
+            case .analyzing(let img),
+                 .success(let img, _),
+                 .failure(let img, _):       return img
+            }
+        }
+        var isAnalyzing: Bool {
+            if case .analyzing = self { return true }
+            return false
+        }
+        var isSuccess: Bool {
+            if case .success(_, let r) = self { return r.detected }
+            return false
+        }
+    }
+
+    @State private var stage: Stage = .shooting
+    @State private var captureTrigger = 0
+    @State private var cameraError: String?
 
     var body: some View {
-        CameraView(
-            onComplete: onSolve,
-            allowedTaskIDs: store.pendingMission?.photoTaskIDs
-        )
+        VStack(spacing: 0) {
+            instructionBanner
+                .padding(.horizontal, 22)
+                .padding(.top, 12)
+
+            previewCard
+                .padding(.horizontal, 22)
+                .padding(.top, 20)
+
+            statusRow
+                .padding(.top, 14)
+                .frame(minHeight: 44)
+
+            Spacer(minLength: 12)
+            actionRow
+                .padding(.horizontal, 22)
+                .padding(.bottom, 24)
+        }
+        .onChange(of: task.id) { _, _ in
+            // Parent swapped the object — reset the camera stage.
+            reset()
+        }
+        .alert("Camera Error", isPresented: .constant(cameraError != nil), actions: {
+            Button("OK", role: .cancel) {
+                cameraError = nil
+                reset()
+            }
+        }, message: { Text(cameraError ?? "") })
+    }
+
+    // MARK: - Instruction banner
+
+    private var instructionBanner: some View {
+        HStack(spacing: 10) {
+            Text(task.emoji).font(.system(size: 28))
+            Text(task.instruction)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(OB.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(OB.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - Preview card (fixed 3:4)
+
+    private var previewCard: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OB.card)
+
+            cameraContent
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+            if stage.isAnalyzing {
+                ScanningOverlay()
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .transition(.opacity)
+            }
+
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(borderColor, lineWidth: stage.isSuccess ? 3 : 1)
+                .animation(.easeInOut(duration: 0.25), value: stage.isSuccess)
+
+            if stage.isSuccess {
+                VStack {
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 56))
+                        .foregroundStyle(OB.ok)
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                        .padding(.bottom, 22)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+        }
+        .aspectRatio(3.0/4.0, contentMode: .fit)
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: stage.isSuccess)
+    }
+
+    @ViewBuilder
+    private var cameraContent: some View {
+        if let image = stage.capturedImage {
+            // Pin the image to the card's exact rect (see PhotoTaskTestSheet
+            // for rationale — `.scaledToFill()` otherwise reports the photo's
+            // natural pixel size and stretches the parent).
+            GeometryReader { geo in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+            }
+        } else {
+            PhotoCaptureView(
+                captureTrigger: $captureTrigger,
+                onCapture: handleCapture,
+                onError: { cameraError = $0 }
+            )
+        }
+    }
+
+    private var borderColor: Color {
+        switch stage {
+        case .success(_, let r): return r.detected ? OB.ok : OB.accent.opacity(0.8)
+        case .failure:           return OB.accent.opacity(0.8)
+        default:                 return OB.line
+        }
+    }
+
+    // MARK: - Status row
+
+    @ViewBuilder
+    private var statusRow: some View {
+        switch stage {
+        case .shooting:
+            Text("Hold steady and tap to capture")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.ink3)
+                .multilineTextAlignment(.center)
+
+        case .analyzing:
+            EmptyView()
+
+        case .success(_, let r):
+            VStack(spacing: 4) {
+                Text(r.detected ? "Detected!" : "Not detected")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(r.detected ? OB.ok : OB.accent)
+                Text(detailLine(result: r))
+                    .font(.system(size: 12))
+                    .foregroundStyle(OB.ink3)
+            }
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 22)
+
+        case .failure(_, let message):
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OB.accent)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 22)
+        }
+    }
+
+    private func detailLine(result: MissionRecognitionResult) -> String {
+        let label = result.topLabel.isEmpty ? "—" : result.topLabel
+        let pct = Int((result.confidence * 100).rounded())
+        return "Saw: \(label)   •   confidence \(pct)%"
+    }
+
+    // MARK: - Action row
+
+    @ViewBuilder
+    private var actionRow: some View {
+        switch stage {
+        case .shooting:
+            captureCircle(enabled: true).frame(maxWidth: .infinity)
+        case .analyzing:
+            captureCircle(enabled: false).frame(maxWidth: .infinity)
+        case .success(_, let r):
+            if r.detected {
+                primaryButton(title: "Done", color: OB.ok, action: onSolve)
+            } else {
+                primaryButton(title: "Try Again", color: OB.accent) { reset() }
+            }
+        case .failure:
+            primaryButton(title: "Try Again", color: OB.accent) { reset() }
+        }
+    }
+
+    private func captureCircle(enabled: Bool) -> some View {
+        Button {
+            captureTrigger += 1
+        } label: {
+            Circle()
+                .fill(enabled ? OB.accent : OB.ink3.opacity(0.35))
+                .frame(width: 72, height: 72)
+                .overlay(Circle().stroke(.white, lineWidth: 4).padding(6))
+                .shadow(color: enabled ? OB.accent.opacity(0.35) : .clear, radius: 10, y: 4)
+        }
+        .buttonStyle(ScaleButtonStyle())
+        .disabled(!enabled)
+    }
+
+    private func primaryButton(title: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(ScaleButtonStyle())
+    }
+
+    // MARK: - Logic
+
+    private func reset() {
+        captureTrigger = 0
+        stage = .shooting
+    }
+
+    private func handleCapture(_ image: UIImage) {
+        stage = .analyzing(image)
+        Task {
+            let result = await NetworkingService.recognizeMissionPhoto(image: image, task: task)
+            await MainActor.run {
+                withAnimation {
+                    switch result {
+                    case .success(let r):
+                        stage = .success(image, r)
+                    case .failure(let err):
+                        stage = .failure(image, err.localizedDescription)
+                    }
+                }
+            }
+        }
     }
 }
 
