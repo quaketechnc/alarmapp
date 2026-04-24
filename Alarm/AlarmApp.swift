@@ -125,9 +125,20 @@ struct AlarmApp: App {
         ])
         store.firingAlarmID = id
         store.pendingMission = item
-        // Any prior rescue is stale — this primary just woke the user.
-        AlarmService.shared.cancelRescue()
-        kitState.rescueFireDate = nil
+        // Insurance rescue: keep a fallback alarm queued in AlarmKit even
+        // while the primary is currently alerting. If the user kills the app
+        // via app-switcher mid-alert, the rescue-loop dies with the process
+        // and we'd otherwise be silent until the next day. With this queued,
+        // the OS fires the rescue ~5s later and re-wakes them.
+        // `completeMission` / `selectRandomMission` / stuck-detection all
+        // cancel it through the normal paths.
+        do {
+            _ = try await AlarmService.shared.scheduleRescue(for: item)
+            kitState.rescueFireDate = Date().addingTimeInterval(AlarmService.rescueDelaySeconds)
+            log.info("✓ insurance rescue queued on primary fire, fires at \(self.kitState.rescueFireDate!)")
+        } catch {
+            log.error("✗ insurance rescue schedule failed: \(error)")
+        }
     }
 
     // MARK: - Volume loop
@@ -243,9 +254,13 @@ struct AlarmApp: App {
             AudioService.shared.play(toneID: item.toneID, volume: item.volume, loops: -1)
         }
 
-        // (C) Queue a rescue alarm iff: AlarmKit not alerting, no rescue
-        // currently pending, and the user isn't already on the mission screen.
-        if !isAlerting, !rescuePending, !store.isOnMissionScreen {
+        // (C) Queue a rescue alarm iff: no rescue currently pending AND the
+        // user isn't already on the mission screen. Critically, we schedule
+        // even while the primary is `.alerting` — that's the window when
+        // app-switcher kill leaves AlarmKit with an empty queue and the user
+        // stops hearing anything until tomorrow. Keeping a rescue queued at
+        // all times during a pending mission plugs that hole.
+        if !rescuePending, !store.isOnMissionScreen {
             do {
                 _ = try await AlarmService.shared.scheduleRescue(for: item)
                 kitState.rescueFireDate = Date().addingTimeInterval(AlarmService.rescueDelaySeconds)

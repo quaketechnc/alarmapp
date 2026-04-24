@@ -55,7 +55,7 @@ struct PermNotifScreen: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text("ALARMY")
+                    Text("WAKEPAL")
                         .font(.system(size: 13, weight: .semibold))
                         .kerning(0.3)
                         .foregroundStyle(OB.ink)

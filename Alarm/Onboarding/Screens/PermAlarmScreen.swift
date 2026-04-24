@@ -83,7 +83,7 @@ struct PermAlarmScreen: View {
                 Text("Permission denied")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OB.deniedText)
-                Text("Tap \"Open Settings\", go to Alarmy and enable Alarms. Then return here.")
+                Text("Tap \"Open Settings\", go to WakePal and enable Alarms. Then return here.")
                     .font(.system(size: 12))
                     .foregroundStyle(Color(red: 0.478, green: 0.176, blue: 0.122))
                     .lineSpacing(3)

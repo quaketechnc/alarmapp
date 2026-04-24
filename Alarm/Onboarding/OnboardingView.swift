@@ -45,9 +45,9 @@ struct OnboardingView: View {
                 PermAlarmScreen(state: $coord.alarmPermState)
                     .transition(slideTransition)
 
-            case .permNotif:
-                PermNotifScreen(state: $coord.notifPermState)
-                    .transition(slideTransition)
+//            case .permNotif:
+//                PermNotifScreen(state: $coord.notifPermState)
+//                    .transition(slideTransition)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -68,7 +68,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var primaryButtonArea: some View {
         VStack(spacing: 8) {
-            if coord.step == .permNotif && coord.notifPermState == .denied && !coord.notifGrantedViaSettings {
+            if coord.step == .permAlarm && coord.alarmPermState == .denied && !coord.alarmGrantedViaSettings {
                 Button(action: buildAndComplete) {
                     Text("Continue anyway →")
                         .font(.system(size: 13))
@@ -95,10 +95,10 @@ struct OnboardingView: View {
             if coord.alarmGrantedViaSettings   { return "Continue" }
             if coord.alarmPermState == .denied  { return "Open Settings" }
             return "Allow Alarms"
-        case .permNotif:
-            if coord.notifGrantedViaSettings   { return "Continue" }
-            if coord.notifPermState == .denied  { return "Open Settings" }
-            return "Allow Notifications"
+//        case .permNotif:
+//            if coord.notifGrantedViaSettings   { return "Continue" }
+//            if coord.notifPermState == .denied  { return "Open Settings" }
+//            return "Allow Notifications"
         }
     }
 
@@ -106,7 +106,7 @@ struct OnboardingView: View {
         switch coord.step {
         case .setAlarm, .mission: return .accent
         case .permAlarm where coord.alarmPermState == .denied && !coord.alarmGrantedViaSettings: return .secondary
-        case .permNotif where coord.notifPermState == .denied && !coord.notifGrantedViaSettings: return .secondary
+//        case .permNotif where coord.notifPermState == .denied && !coord.notifGrantedViaSettings: return .secondary
         default: return .primary
         }
     }
@@ -124,20 +124,21 @@ struct OnboardingView: View {
             navigateNext()
         case .permAlarm:
             if coord.alarmGrantedViaSettings {
-                navigateNext()
+//                navigateNext()
+                buildAndComplete()
             } else if coord.alarmPermState == .denied {
                 openSettings()
             } else {
                 coord.requestAlarmPermission(onGranted: navigateNext)
             }
-        case .permNotif:
-            if coord.notifGrantedViaSettings {
-                buildAndComplete()
-            } else if coord.notifPermState == .denied {
-                openSettings()
-            } else {
-                coord.requestNotifPermission(onGranted: buildAndComplete)
-            }
+//        case .permNotif:
+//            if coord.notifGrantedViaSettings {
+//                buildAndComplete()
+//            } else if coord.notifPermState == .denied {
+//                openSettings()
+//            } else {
+//                coord.requestNotifPermission(onGranted: buildAndComplete)
+//            }
         }
     }
 
@@ -175,15 +176,15 @@ struct OnboardingView: View {
                 withAnimation { coord.alarmPermState = .granted }
                 coord.alarmGrantedViaSettings = true
             }
-        case .permNotif:
-            guard coord.notifPermState == .prompt else { return }
-            UNUserNotificationCenter.current().getNotificationSettings { settings in
-                DispatchQueue.main.async {
-                    if case .authorized = settings.authorizationStatus {
-                        withAnimation { coord.notifPermState = .granted }
-                    }
-                }
-            }
+//        case .permNotif:
+//            guard coord.notifPermState == .prompt else { return }
+//            UNUserNotificationCenter.current().getNotificationSettings { settings in
+//                DispatchQueue.main.async {
+//                    if case .authorized = settings.authorizationStatus {
+//                        withAnimation { coord.notifPermState = .granted }
+//                    }
+//                }
+//            }
         default: break
         }
     }
@@ -200,20 +201,20 @@ struct OnboardingView: View {
                 coord.alarmGrantedViaSettings = false
             case .notDetermined: break
             }
-        case .permNotif:
-            UNUserNotificationCenter.current().getNotificationSettings { settings in
-                DispatchQueue.main.async {
-                    switch settings.authorizationStatus {
-                    case .authorized, .provisional, .ephemeral:
-                        withAnimation { coord.notifPermState = .granted }
-                        coord.notifGrantedViaSettings = true
-                    case .denied:
-                        withAnimation { coord.notifPermState = .denied }
-                        coord.notifGrantedViaSettings = false
-                    default: break
-                    }
-                }
-            }
+//        case .permNotif:
+//            UNUserNotificationCenter.current().getNotificationSettings { settings in
+//                DispatchQueue.main.async {
+//                    switch settings.authorizationStatus {
+//                    case .authorized, .provisional, .ephemeral:
+//                        withAnimation { coord.notifPermState = .granted }
+//                        coord.notifGrantedViaSettings = true
+//                    case .denied:
+//                        withAnimation { coord.notifPermState = .denied }
+//                        coord.notifGrantedViaSettings = false
+//                    default: break
+//                    }
+//                }
+//            }
         default: break
         }
     }

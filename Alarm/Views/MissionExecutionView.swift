@@ -106,10 +106,10 @@ struct MissionExecutionView: View {
             TaskService.shared.setAllowed(ids: store.pendingMission?.photoTaskIDs)
             photoTask = TaskService.shared.current
 
-            withAnimation(.easeInOut(duration: 1).delay(3)) {
+            withAnimation(.easeInOut(duration: 1).delay(30)) {
                 showChangeMissionButton = true
             }
-            withAnimation(.easeInOut(duration: 1).delay(18)) {
+            withAnimation(.easeInOut(duration: 1).delay(120)) {
                 showgiveUpButton = true
             }
         }

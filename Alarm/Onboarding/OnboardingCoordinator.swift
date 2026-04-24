@@ -4,7 +4,7 @@ import UserNotifications
 // MARK: - Data models
 
 enum OnboardingStep: Int, CaseIterable {
-    case intro, setAlarm, ringtone, mission, permAlarm, permNotif
+    case intro, setAlarm, ringtone, mission, permAlarm //, permNotif
 }
 
 enum PermState { case prompt, granted, denied }

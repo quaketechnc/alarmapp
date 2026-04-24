@@ -84,7 +84,7 @@ struct IntroScreen: View {
                 .fill(OB.ink)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("ALARMY")
+                Text("WAKEPAL")
                     .font(.system(size: 11, weight: .semibold))
                     .kerning(0.4)
                     .foregroundStyle(.white.opacity(0.5))
