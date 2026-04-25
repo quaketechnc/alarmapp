@@ -105,17 +105,6 @@ struct RingingView: View {
             } else {
                 log.info("🔔 RingingView appear without tone")
             }
-
-            // Auto-push to MissionExecutionView after a 0.6s intro unless the
-            // only mission is 'off' (then user taps Dismiss manually).
-            if selectedMission.id != .off {
-                Task {
-                    try? await Task.sleep(nanoseconds: 600_000_000)
-                    if !showMission {
-                        showMission = true
-                    }
-                }
-            }
         }
         .onReceive(timer) { now = $0 }
         .fullScreenCover(isPresented: $showMission, onDismiss: {
