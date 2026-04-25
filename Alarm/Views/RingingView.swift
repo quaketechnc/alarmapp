@@ -88,6 +88,8 @@ struct RingingView: View {
             .padding(.top, 25)
         }
         .onAppear {
+            // Suppress rescue-loop reschedules while the alarm UI is on screen.
+            store.isOnMissionScreen = true
             pulseScale = 1.3
             if let toneID = toneID {
                 log.info("🔔 RingingView appear — toneID='\(toneID)' volume=\(Int(volume))% audio.isPlaying=\(AudioService.shared.isPlaying)")
@@ -106,10 +108,11 @@ struct RingingView: View {
                 log.info("🔔 RingingView appear without tone")
             }
         }
-        .onReceive(timer) { now = $0 }
-        .fullScreenCover(isPresented: $showMission, onDismiss: {
+        .onDisappear {
             store.isOnMissionScreen = false
-        }) {
+        }
+        .onReceive(timer) { now = $0 }
+        .fullScreenCover(isPresented: $showMission) {
             MissionExecutionView(
                 missions: missions,
                 startingMission: selectedMission,
@@ -118,7 +121,6 @@ struct RingingView: View {
                     onDismiss()
                 }
             )
-            .onAppear { store.isOnMissionScreen = true }
         }
     }
     
