@@ -103,6 +103,8 @@ final class AlarmStore {
     }
 
     func add(_ item: AlarmItem) {
+        var item = item
+        Self.ensureMissions(&item)
         items.append(item)
         log.info("+ add id=\(item.id) time=\(item.timeString) tone='\(item.toneID)' missions=\(item.selectedMissions.map({$0.id}))")
         save()
@@ -110,9 +112,19 @@ final class AlarmStore {
 
     func update(_ item: AlarmItem) {
         guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
+        var item = item
+        Self.ensureMissions(&item)
         items[i] = item
         log.debug("↻ update id=\(item.id) alarmKitID=\(item.alarmKitID ?? "nil")")
         save()
+    }
+
+    /// Гарантирует, что у будильника есть хотя бы одна задача. Пустой список →
+    /// одиночная `.off` (мгновенный dismiss без миссии).
+    private static func ensureMissions(_ item: inout AlarmItem) {
+        if item.selectedMissions.isEmpty {
+            item.selectedMissions = [AlarmMission(from: .off)]
+        }
     }
 
     func delete(at offsets: IndexSet) {
